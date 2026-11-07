@@ -36,7 +36,7 @@ body {
   overflow: hidden;
 }
 
-/* ---------- toolbar ---------- */
+/* ---------- 顶部工具条 ---------- */
 
 .bar {
   display: flex;
@@ -83,7 +83,7 @@ input.name::placeholder { color: var(--muted); }
 
 select { max-width: 180px; }
 
-/* ---------- canvas ---------- */
+/* ---------- 画布 ---------- */
 
 #canvas {
   position: relative;
@@ -110,6 +110,7 @@ select { max-width: 180px; }
   stroke-width: 1.5;
 }
 
+/* 加宽的透明路径，方便点中细线 */
 #wires path.hit {
   stroke: transparent;
   stroke-width: 14;
@@ -123,12 +124,16 @@ select { max-width: 180px; }
   stroke-dasharray: 4 4;
 }
 
+.arrowhead { fill: var(--fg); }
+
+/* 节点层铺满画布，但只有节点本身吃事件，空白处要穿透到 SVG 连线和画布 */
 #nodes {
   position: absolute;
   inset: 0;
+  pointer-events: none;
 }
 
-/* ---------- node ---------- */
+/* ---------- 节点 ---------- */
 
 .node {
   position: absolute;
@@ -143,6 +148,7 @@ select { max-width: 180px; }
   user-select: none;
   text-align: center;
   overflow-wrap: anywhere;
+  pointer-events: auto;
 }
 
 .node.sel {
@@ -177,10 +183,3 @@ select { max-width: 180px; }
 
 .node:hover .port,
 .node.sel .port { opacity: 1; }
-
-/* arrow head color follows theme */
-.arrowhead { fill: var(--fg); }
-
-/* #nodes 铺满画布，但只有节点本身接收事件，空白处要穿透到 SVG 连线和 canvas */
-#nodes { pointer-events: none; }
-.node { pointer-events: auto; }
