@@ -127,9 +127,29 @@ const pixel = await cdp.eval(`(async () => {
   const d = ctx.getImageData(0, 0, 1, 1).data;
   return { r: d[0], g: d[1], b: d[2], a: d[3] };
 })()`);
-const isDark = pixel.r < 120 && pixel.g < 120 && pixel.b < 120;
-check('线与节点重叠处画的是线（像素为深色）', isDark,
-      `重叠点 (${overlap.x},${overlap.y}) 像素 rgba(${pixel.r},${pixel.g},${pixel.b},${pixel.a})`);
+// 连线现在会绕开节点，所以这里应该看到节点底色；线在节点之上的保证由 z-index 断言覆盖
+const brightness = (pixel.r + pixel.g + pixel.b) / 3;
+const routed = await cdp.eval(`(() => {
+  const geo = edgeGeometry(state.edges[0]);
+  const m = state.nodes.find(n => n.id === 'M');
+  const crosses = geo.points.slice(1).some((p, i) => {
+    const a = geo.points[i], b = p;
+    const eps = 1.2;
+    if (a.y === b.y) {
+      const lo = Math.min(a.x, b.x), hi = Math.max(a.x, b.x);
+      return a.y > m.y + eps && a.y < m.y + m.h - eps && hi > m.x + eps && lo < m.x + m.w - eps;
+    }
+    if (a.x === b.x) {
+      const lo = Math.min(a.y, b.y), hi = Math.max(a.y, b.y);
+      return a.x > m.x + eps && a.x < m.x + m.w - eps && hi > m.y + eps && lo < m.y + m.h - eps;
+    }
+    return true;
+  });
+  return { crosses, n: geo.points.length };
+})()`);
+check('连线绕开节点（节点中心为底色，路径不穿过）',
+      brightness > 180 && routed.crosses === false,
+      `像素亮度 ${brightness.toFixed(0)} 路径穿过=${routed.crosses} 折点数=${routed.n}`);
 
 // ---- 3. 节点仍能被点中并拖动（线不抢事件）----
 const mBox = await cdp.eval(`(() => {

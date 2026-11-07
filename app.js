@@ -20,7 +20,8 @@ const el = {
 const state = { name: '', nodes: [], edges: [] };
 let uid = 1;
 let tempPath = null;
-let lastTap = null;
+let lastTap = null;        // 节点上的双击检测
+let lastTapCanvas = null;  // 画布上的双击检测（不依赖原生 dblclick）
 let drag = null;
 // 画布视图位移：节点坐标不变，只移动整个视图，方便画大图
 let view = { x: 0, y: 0 };
@@ -183,6 +184,175 @@ function toPath(points) {
   return points.map((p, i) => `${i ? 'L' : 'M'}${p.x},${p.y}`).join(' ');
 }
 
+/* ---------------- 绕开节点的直角布线 ---------------- */
+
+const ROUTE_MARGIN = 10;     // 线与节点之间留的间距
+const ROUTE_STUB = 14;       // 从连接点先直着出去的一小段
+const ROUTE_TURN_COST = 30;  // 拐一次弯的代价，越小越爱拐弯
+const ROUTE_MAX_NODES = 80;  // 节点太多就不做绕行，免得拖不动
+
+// 连线路径缓存：节点没动就复用，避免每帧都跑寻路
+const routeCache = new Map();
+let routeStamp = '';
+
+function inflateRect(n, m) {
+  return { x1: n.x - m, y1: n.y - m, x2: n.x + n.w + m, y2: n.y + n.h + m };
+}
+
+function pointInRect(p, r, eps = 0.5) {
+  return p.x > r.x1 + eps && p.x < r.x2 - eps && p.y > r.y1 + eps && p.y < r.y2 - eps;
+}
+
+// 正交线段是否穿过某个矩形（贴边不算穿）
+function segBlocked(a, b, rects) {
+  const eps = 0.5;
+  if (a.y === b.y) {
+    const lo = Math.min(a.x, b.x);
+    const hi = Math.max(a.x, b.x);
+    return rects.some(r => a.y > r.y1 + eps && a.y < r.y2 - eps && hi > r.x1 + eps && lo < r.x2 - eps);
+  }
+  if (a.x === b.x) {
+    const lo = Math.min(a.y, b.y);
+    const hi = Math.max(a.y, b.y);
+    return rects.some(r => a.x > r.x1 + eps && a.x < r.x2 - eps && hi > r.y1 + eps && lo < r.y2 - eps);
+  }
+  return true;
+}
+
+class MinHeap {
+  constructor() { this.a = []; }
+  get size() { return this.a.length; }
+  push(n) {
+    const a = this.a;
+    a.push(n);
+    let i = a.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (a[p].f <= a[i].f) break;
+      const t = a[p]; a[p] = a[i]; a[i] = t;
+      i = p;
+    }
+  }
+  pop() {
+    const a = this.a;
+    if (!a.length) return null;
+    const top = a[0];
+    const last = a.pop();
+    if (a.length) {
+      a[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = i * 2 + 1;
+        const r = l + 1;
+        let m = i;
+        if (l < a.length && a[l].f < a[m].f) m = l;
+        if (r < a.length && a[r].f < a[m].f) m = r;
+        if (m === i) break;
+        const t = a[m]; a[m] = a[i]; a[i] = t;
+        i = m;
+      }
+    }
+    return top;
+  }
+}
+
+const uniqSorted = arr => [...new Set(arr)].sort((a, b) => a - b);
+
+// 在「节点边界 ± 间距」构成的网格上做 A*，返回中间折点（不含起终点）
+function astar(start, end, rects, xs, ys) {
+  const nx = xs.length;
+  const ny = ys.length;
+  const xi = new Map(xs.map((v, i) => [v, i]));
+  const yi = new Map(ys.map((v, i) => [v, i]));
+  const sx = xi.get(start.x);
+  const sy = yi.get(start.y);
+  const ex = xi.get(end.x);
+  const ey = yi.get(end.y);
+  if ([sx, sy, ex, ey].some(v => v === undefined)) return null;
+
+  const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  // 方向用 0..3，4 表示「还没走过」
+  const keyOf = (x, y, d) => (y * nx + x) * 5 + d;
+  const best = new Map();
+  const from = new Map();
+  const heap = new MinHeap();
+  const h = () => Math.abs(xs[sx] - xs[ex]) + Math.abs(ys[sy] - ys[ey]);
+
+  const startKey = keyOf(sx, sy, 4);
+  best.set(startKey, 0);
+  heap.push({ x: sx, y: sy, d: 4, g: 0, f: h(), k: startKey });
+
+  let goal = null;
+  while (heap.size) {
+    const cur = heap.pop();
+    if (cur.g > (best.get(cur.k) ?? Infinity)) continue;
+    if (cur.x === ex && cur.y === ey) { goal = cur; break; }
+
+    for (let d = 0; d < 4; d++) {
+      const tx = cur.x + DIRS[d][0];
+      const ty = cur.y + DIRS[d][1];
+      if (tx < 0 || tx >= nx || ty < 0 || ty >= ny) continue;
+      const p = { x: xs[cur.x], y: ys[cur.y] };
+      const q = { x: xs[tx], y: ys[ty] };
+      if (segBlocked(p, q, rects)) continue;
+
+      const step = Math.abs(q.x - p.x) + Math.abs(q.y - p.y);
+      const turn = cur.d !== 4 && cur.d !== d ? ROUTE_TURN_COST : 0;
+      const g = cur.g + step + turn;
+      const k = keyOf(tx, ty, d);
+      if (g >= (best.get(k) ?? Infinity)) continue;
+      best.set(k, g);
+      from.set(k, cur.k);
+      heap.push({ x: tx, y: ty, d, g, f: g + Math.abs(q.x - xs[ex]) + Math.abs(q.y - ys[ey]), k });
+    }
+  }
+
+  if (!goal) return null;
+  const out = [];
+  let k = goal.k;
+  while (k !== undefined && k !== startKey) {
+    const idx = Math.floor(k / 5);
+    const y = Math.floor(idx / nx);
+    const x = idx % nx;
+    out.push({ x: xs[x], y: ys[y] });
+    k = from.get(k);
+  }
+  out.reverse();
+  return out;
+}
+
+// 尽力绕开所有实心节点；实在绕不开就退回简单折线
+function routePoints(p1, s1, p2, s2) {
+  const simple = orthoPoints(p1, s1, p2, s2);
+  if (!state.nodes.length || state.nodes.length > ROUTE_MAX_NODES) return simple;
+
+  // 容器只是个框，不是实体障碍，否则容器内成员之间的线无路可走
+  const blockers = state.nodes.filter(n => n.kind !== 'group');
+  const n1 = SIDE_NORMAL[s1] || { x: 0, y: 0 };
+  const n2 = SIDE_NORMAL[s2] || { x: 0, y: 0 };
+
+  // 依次尝试：先留足间距；两节点贴得很近时再放宽到贴边走
+  const attempts = [
+    { margin: ROUTE_MARGIN, stub: ROUTE_STUB },
+    { margin: 0, stub: 6 },
+    { margin: 0, stub: 0 },
+  ];
+
+  for (const { margin, stub } of attempts) {
+    const rects = blockers.map(n => inflateRect(n, margin));
+    const a = { x: p1.x + n1.x * stub, y: p1.y + n1.y * stub };
+    const b = { x: p2.x + n2.x * stub, y: p2.y + n2.y * stub };
+    if (rects.some(r => pointInRect(a, r)) || rects.some(r => pointInRect(b, r))) continue;
+
+    const xs = uniqSorted([a.x, b.x, ...rects.flatMap(r => [r.x1, r.x2])]);
+    const ys = uniqSorted([a.y, b.y, ...rects.flatMap(r => [r.y1, r.y2])]);
+    const mid = astar(a, b, rects, xs, ys);
+    if (mid) return tidy([p1, a, ...mid, b, p2]);
+  }
+
+  return simple;
+}
+
 // 一条连线的路径与端点信息
 function edgeGeometry(e) {
   const a = getNode(e.from);
@@ -192,7 +362,7 @@ function edgeGeometry(e) {
   if (!s1 || !s2) [s1, s2] = inferSides(a, b);
   const p1 = portPoint(a, s1);
   const p2 = portPoint(b, s2);
-  return { points: orthoPoints(p1, s1, p2, s2), p1, p2, s1, s2 };
+  return { points: routePoints(p1, s1, p2, s2), p1, p2, s1, s2 };
 }
 
 /* ---------------- 容器 ---------------- */
@@ -260,8 +430,21 @@ function renderNodes() {
 function drawEdges() {
   el.wireLayer.textContent = '';
   el.hitLayer.textContent = '';
+
+  // 节点几何一变就清缓存，否则拖动时每帧都会重跑寻路
+  const stamp = state.nodes.map(n => `${n.id}:${n.x},${n.y},${n.w},${n.h}`).join('|');
+  if (stamp !== routeStamp) {
+    routeStamp = stamp;
+    routeCache.clear();
+  }
+
   for (const e of state.edges) {
-    const geo = edgeGeometry(e);
+    const ck = edgeKey(e);
+    let geo = routeCache.get(ck);
+    if (geo === undefined) {
+      geo = edgeGeometry(e);
+      routeCache.set(ck, geo);
+    }
     if (!geo) continue;
     const d = toPath(geo.points);
     const key = edgeKey(e);
@@ -464,6 +647,34 @@ el.canvas.addEventListener('pointerdown', ev => {
 
   if (ev.button !== 0 || onNode) return;
 
+  // 自己判定画布双击。
+  // 不能用原生 dblclick：第一次点击若选中了连线会重建 SVG，
+  // 浏览器就认为两次点击的目标不同，不再派发 dblclick。
+  const now = performance.now();
+  const isDouble = !!lastTapCanvas &&
+    now - lastTapCanvas.t < 400 &&
+    Math.abs(ev.clientX - lastTapCanvas.x) < 6 &&
+    Math.abs(ev.clientY - lastTapCanvas.y) < 6;
+  lastTapCanvas = isDouble ? null : { t: now, x: ev.clientX, y: ev.clientY };
+
+  if (isDouble && tool === 'select') {
+    ev.preventDefault();
+    const p = toCanvas(ev.clientX, ev.clientY);
+    const node = {
+      id: nextId(),
+      x: Math.round(p.x - 70),
+      y: Math.round(p.y - 28),
+      w: 140,
+      h: 56,
+      text: '节点',
+      kind: 'box',
+    };
+    state.nodes.push(node);
+    render();
+    select('node', node.id);
+    return;
+  }
+
   // 连线上按下：不框选，松手时没移动就选中它
   const hit = ev.target.closest('#wireHits path');
 
@@ -585,7 +796,7 @@ window.addEventListener('pointermove', ev => {
     const p1 = portPoint(from, drag.fromSide);
     // 预览也走直角折线，和最终效果一致
     const hoverSide = hoveredPortSide(ev, drag.from) || oppositeSide(drag.fromSide);
-    tempPath.setAttribute('d', toPath(orthoPoints(p1, drag.fromSide, toward, hoverSide, 12)));
+    tempPath.setAttribute('d', toPath(routePoints(p1, drag.fromSide, toward, hoverSide)));
 
     // 提示鼠标当前停在哪个连接点上
     for (const p of el.nodes.querySelectorAll('.port.over')) p.classList.remove('over');
@@ -724,26 +935,6 @@ window.addEventListener('pointerup', ev => {
     startEdit(el.nodes.querySelector(`.node[data-id="${d.id}"]`));
   }
   drawEdges();
-});
-
-/* ---------------- 画布：双击新建 ---------------- */
-
-el.canvas.addEventListener('dblclick', ev => {
-  if (ev.target.closest('.node')) return;
-  if (tool !== 'select') return;
-  const p = toCanvas(ev.clientX, ev.clientY);
-  const node = {
-    id: nextId(),
-    x: Math.round(p.x - 70),
-    y: Math.round(p.y - 28),
-    w: 140,
-    h: 56,
-    text: '节点',
-    kind: 'box',
-  };
-  state.nodes.push(node);
-  render();
-  select('node', node.id);
 });
 
 /* ---------------- 编辑框事件 ---------------- */

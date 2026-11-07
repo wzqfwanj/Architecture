@@ -40,13 +40,14 @@ CHROME_CANDIDATES = [
 ]
 
 # 快速测试只跑核心交互，全部测试包含平移/连线等
-QUICK_TESTS = ["tests/interaction.mjs", "tests/ports.mjs", "tests/multi.mjs", "tests/style.mjs", "tests/layers.mjs"]
+QUICK_TESTS = ["tests/interaction.mjs", "tests/ports.mjs", "tests/multi.mjs", "tests/layers.mjs", "tests/routing.mjs", "tests/style.mjs"]
 ALL_TESTS = [
     "tests/interaction.mjs",
     "tests/ports.mjs",
     "tests/multi.mjs",
     "tests/style.mjs",
     "tests/layers.mjs",
+    "tests/routing.mjs",
     "tests/pan.mjs",
     "tests/middle.mjs",
     "tests/touch_save.mjs",
