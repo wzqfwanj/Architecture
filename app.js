@@ -1,5 +1,6 @@
-// Architecture —— 极简架构图编辑器
-const API = '/api/diagrams';
+﻿// Architecture —— 极简架构图编辑器
+// 相对路径，方便挂在反向代理的子路径下（如 /arch/）
+const API = 'api/diagrams';
 const NS = 'http://www.w3.org/2000/svg';
 
 const el = {
