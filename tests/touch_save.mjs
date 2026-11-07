@@ -114,7 +114,7 @@ const reopened = await cdp.eval(`(() => {
   const nodes = [...document.querySelectorAll('.node')];
   return { count: nodes.length, texts: nodes.map(n => n.textContent.trim()),
            name: document.getElementById('name').value,
-           wires: document.querySelectorAll('#wireLayer path:not(.hit)').length };
+           wires: document.querySelectorAll('#wireLayer path').length };
 })()`);
 check('重开页面自动载入存档', reopened.count === 2 && reopened.name === '往返测试' && reopened.wires === 1,
       JSON.stringify(reopened));

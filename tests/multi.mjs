@@ -179,35 +179,55 @@ check('拖动容器整体移动成员',
       `容器(${g1.x},${g1.y}) A(${a1.x},${a1.y})`);
 
 // ===== 7. 容器渲染在下层、样式正确 =====
+// 现在靠 DOM 顺序保证层级：容器先渲染，方框后渲染压在上面
 const layer = await cdp.eval(`(() => {
   const g = document.querySelector('.node[data-kind="group"]');
   const box = document.querySelector('.node[data-kind="box"]');
+  const all = [...document.querySelectorAll('#nodes .node')];
+  const gi = all.indexOf(g);
+  const bi = all.indexOf(box);
+  const gRect = g.getBoundingClientRect();
+  const bRect = box.getBoundingClientRect();
+  // 成员方框中心处点到的应该是方框，不是容器
+  const hitAtMember = document.elementFromPoint(
+    bRect.left + bRect.width / 2, bRect.top + bRect.height / 2);
   return {
-    groupZ: getComputedStyle(g).zIndex,
-    boxZ: getComputedStyle(box).zIndex,
     borderStyle: getComputedStyle(g).borderStyle,
-    firstKind: document.querySelector('#nodes .node').dataset.kind,
+    firstKind: all[0].dataset.kind,
+    groupBeforeBox: gi < bi,
+    // 容器内部空白处（右下角）点到的应该是容器本身
+    hitAtGroupBlank: (() => {
+      const e = document.elementFromPoint(gRect.right - 8, gRect.bottom - 8);
+      return e?.closest('.node')?.dataset.kind || null;
+    })(),
+    hitAtMemberKind: hitAtMember?.closest('.node')?.dataset.kind || null,
   };
 })()`);
-check('容器在下层且虚线边框',
-      +layer.groupZ < +layer.boxZ && layer.borderStyle === 'dashed' && layer.firstKind === 'group',
+check('容器先渲染且在方框下层',
+      layer.firstKind === 'group' && layer.groupBeforeBox === true &&
+      layer.borderStyle === 'dashed' &&
+      layer.hitAtMemberKind === 'box' && layer.hitAtGroupBlank === 'group',
       JSON.stringify(layer));
 
-// ===== 8. 缩放手柄改大小 =====
+// ===== 8. 右下角缩放手柄已移除 =====
 await setup();
-rect = await canvasRect();
-const handle = await cdp.eval(`(() => {
+await cdp.eval(`(() => {
   const n = document.querySelector('.node[data-id="b1"]');
-  n.classList.add('sel');   // 手柄只在选中时出现
-  const h = n.querySelector('.resize').getBoundingClientRect();
-  return { x: h.left + h.width / 2, y: h.top + h.height / 2 };
+  selection.clear(); selection.add('b1'); markSelection();
 })()`);
-const sizeBefore = (await state_()).nodes.find(n => n.id === 'b1');
-await drag(handle.x, handle.y, handle.x + 70, handle.y + 40);
-const sizeAfter = (await state_()).nodes.find(n => n.id === 'b1');
-check('右下角手柄可改大小',
-      sizeAfter.w - sizeBefore.w === 70 && sizeAfter.h - sizeBefore.h === 40,
-      `${sizeBefore.w}x${sizeBefore.h} -> ${sizeAfter.w}x${sizeAfter.h}`);
+await sleep(150);
+const handleGone = await cdp.eval(`(() => {
+  const n = document.querySelector('.node.sel');
+  return {
+    domCount: document.querySelectorAll('.resize').length,
+    childCount: n ? n.children.length : 0,   // 只剩 label + 4 个端口 = 5
+    childClasses: n ? [...n.children].map(c => c.className) : [],
+  };
+})()`);
+check('选中后也没有右下角手柄',
+      handleGone.domCount === 0 && handleGone.childCount === 5 &&
+      !handleGone.childClasses.includes('resize'),
+      `DOM=${handleGone.domCount} 子元素=${JSON.stringify(handleGone.childClasses)}`);
 
 // ===== 9. 容器 kind 存进存档并能还原 =====
 await cdp.eval(`(() => {

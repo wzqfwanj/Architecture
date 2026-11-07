@@ -29,6 +29,10 @@
   </aside>
 
   <main id="canvas">
+    <!-- 点击层：加宽的透明路径，放在节点下面，重叠处让节点优先 -->
+    <svg id="wireHits" xmlns="http://www.w3.org/2000/svg">
+      <g id="hitLayer"></g>
+    </svg>
     <svg id="wires" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"

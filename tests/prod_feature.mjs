@@ -74,7 +74,6 @@ const meta = await cdp.eval(`(() => ({
   hasOrtho: typeof orthoPoints === 'function',
   hasMarquee: !!document.getElementById('marquee'),
   tools: [...document.querySelectorAll('.tool')].map(b => b.dataset.tool),
-  hasResize: !!document.querySelector('.resize'),
   hint: document.querySelector('.hint').textContent,
 }))()`);
 check('线上是新版前端', meta.hasOrtho && meta.hasMarquee && meta.tools.length === 3,
@@ -108,7 +107,7 @@ const pts = await cdp.eval(`(() => {
 })()`);
 await drag(pts.x1, pts.y1, pts.x2, pts.y2);
 const wire = await cdp.eval(`(() => {
-  const d = document.querySelector('#wireLayer path:not(.hit)')?.getAttribute('d');
+  const d = document.querySelector('#wireLayer path')?.getAttribute('d');
   if (!d) return null;
   const geo = edgeGeometry(state.edges[0]);
   const ortho = geo.points.slice(1).every((p, i) => p.x === geo.points[i].x || p.y === geo.points[i].y);
@@ -180,19 +179,18 @@ check('线上拖容器整体移动',
       gdx === 70 && gdy === 30 && m1x === 70 && m1y === 30,
       `容器 +(${gdx},${gdy}) 成员A +(${m1x},${m1y})`);
 
-// ---- 5. 缩放手柄 ----
+// ---- 5. 右下角手柄已移除 ----
 await setup();
 await sleep(200);
-const h = await cdp.eval(`(() => {
+const handleGone = await cdp.eval(`(() => {
   const n = document.querySelector('.node[data-id="b1"]');
-  selection.add('b1'); markSelection();
-  const r = n.querySelector('.resize').getBoundingClientRect();
-  return { x: r.left + r.width/2, y: r.top + r.height/2, w: state.nodes[0].w, h: state.nodes[0].h };
+  selection.clear(); selection.add('b1'); markSelection();
+  return { dom: document.querySelectorAll('.resize').length,
+           classes: [...n.children].map(c => c.className) };
 })()`);
-await drag(h.x, h.y, h.x + 60, h.y + 30);
-const resized = await cdp.eval(`({ w: state.nodes[0].w, h: state.nodes[0].h })`);
-check('线上手柄改大小', resized.w - h.w === 60 && resized.h - h.h === 30,
-      `${h.w}x${h.h} -> ${resized.w}x${resized.h}`);
+check('线上无右下角手柄',
+      handleGone.dom === 0 && !handleGone.classes.includes('resize'),
+      `DOM=${handleGone.dom} 子元素=${JSON.stringify(handleGone.classes)}`);
 
 // ---- 6. 存档往返（含 kind 与方向）----
 await cdp.eval(`(() => {

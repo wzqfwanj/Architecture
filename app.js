@@ -7,6 +7,7 @@ const el = {
   canvas: document.getElementById('canvas'),
   nodes: document.getElementById('nodes'),
   wireLayer: document.getElementById('wireLayer'),
+  hitLayer: document.getElementById('hitLayer'),
   marquee: document.getElementById('marquee'),
   name: document.getElementById('name'),
   list: document.getElementById('list'),
@@ -246,10 +247,6 @@ function renderNodes() {
       port.dataset.side = side;
       d.append(port);
     }
-    const handle = document.createElement('div');
-    handle.className = 'resize';
-    d.append(handle);
-
     el.nodes.append(d);
   }
   applyView();
@@ -257,26 +254,30 @@ function renderNodes() {
 
 function drawEdges() {
   el.wireLayer.textContent = '';
+  el.hitLayer.textContent = '';
   for (const e of state.edges) {
     const geo = edgeGeometry(e);
     if (!geo) continue;
     const d = toPath(geo.points);
     const key = edgeKey(e);
 
+    // 点击用的加宽路径放低层，避免盖住节点
     const hit = document.createElementNS(NS, 'path');
     hit.setAttribute('d', d);
-    hit.setAttribute('class', 'hit');
     hit.dataset.edge = key;
+    el.hitLayer.append(hit);
 
+    // 看得见的线放高层，不被节点底色切断
     const line = document.createElementNS(NS, 'path');
     line.setAttribute('d', d);
     line.setAttribute('marker-end', 'url(#arrow)');
     if (selectedEdge === key) line.setAttribute('class', 'sel');
-
-    el.wireLayer.append(hit, line);
+    el.wireLayer.append(line);
   }
   if (tempPath) el.wireLayer.append(tempPath);
-  el.wireLayer.setAttribute('transform', `translate(${view.x} ${view.y})`);
+  const t = `translate(${view.x} ${view.y})`;
+  el.wireLayer.setAttribute('transform', t);
+  el.hitLayer.setAttribute('transform', t);
 }
 
 // 正在编辑的文字先落回 state，否则重绘会把它丢掉
@@ -378,20 +379,6 @@ el.nodes.addEventListener('pointerdown', ev => {
     return;
   }
 
-  // 右下角手柄：改大小
-  if (ev.target.classList.contains('resize')) {
-    drag = {
-      mode: 'resize',
-      id: node.id,
-      startX: ev.clientX,
-      startY: ev.clientY,
-      ow: node.w,
-      oh: node.h,
-      moved: false,
-    };
-    return;
-  }
-
   // 双击才进编辑，但要等松手且确认没移动才生效。
   // 否则「点一下、再按下拖动」会被当成双击，表现为拖不动。
   const now = performance.now();
@@ -455,7 +442,7 @@ el.canvas.addEventListener('pointerdown', ev => {
   if (ev.button !== 0 || onNode) return;
 
   // 连线上按下：不框选，松手时没移动就选中它
-  const hit = ev.target.closest('path.hit');
+  const hit = ev.target.closest('#wireHits path');
 
   // 触屏没有中键，拖空白处仍然平移画布，否则手机上没法移动视图
   if (ev.pointerType === 'touch' && !hit) {
@@ -522,24 +509,6 @@ window.addEventListener('pointermove', ev => {
     }
     el.canvas.classList.add('marqueeing');
     showMarquee(drag.startX, drag.startY, cx, cy);
-    return;
-  }
-
-  if (drag.mode === 'resize') {
-    const node = getNode(drag.id);
-    if (!node) return;
-    const dx = ev.clientX - drag.startX;
-    const dy = ev.clientY - drag.startY;
-    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 2) return;
-    drag.moved = true;
-    node.w = Math.max(40, Math.round(drag.ow + dx));
-    node.h = Math.max(30, Math.round(drag.oh + dy));
-    const dom = el.nodes.querySelector(`.node[data-id="${node.id}"]`);
-    if (dom) {
-      dom.style.width = node.w + 'px';
-      dom.style.height = node.h + 'px';
-    }
-    drawEdges();
     return;
   }
 
@@ -680,11 +649,6 @@ window.addEventListener('pointerup', ev => {
     selection.add(node.id);
     render();
     lastTap = { id: node.id, t: performance.now() };
-    return;
-  }
-
-  if (d.mode === 'resize') {
-    drawEdges();
     return;
   }
 

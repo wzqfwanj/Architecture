@@ -153,12 +153,34 @@ select { max-width: 180px; }
 #canvas.panning { cursor: grabbing; }
 #canvas.marqueeing { cursor: crosshair; }
 
+/* 显示层：连线画在节点之上，否则节点的不透明底色会把线切成一截一截 */
 #wires {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   pointer-events: none;
+  z-index: 4;
+}
+
+/* 点击层：只有加宽的透明路径，压在节点下面。
+   线与节点重叠的地方点击归节点，空白处的线仍然点得中。 */
+#wireHits {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  /* 不要给 z-index：它和 #nodes 都是 z-index:auto 时按 DOM 顺序排，
+     这里排在 #nodes 前面就自然落在节点下方。给了 z-index:1 反而会盖住节点。 */
+}
+
+#wireHits path {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
 }
 
 #wires path {
@@ -168,14 +190,6 @@ select { max-width: 180px; }
   /* 直角折线的拐角略微磨圆 */
   stroke-linejoin: round;
   stroke-linecap: round;
-}
-
-/* 加宽的透明路径，方便点中细线 */
-#wires path.hit {
-  stroke: transparent;
-  stroke-width: 14;
-  pointer-events: stroke;
-  cursor: pointer;
 }
 
 #wires path.sel { stroke-width: 3; }
@@ -200,7 +214,7 @@ select { max-width: 180px; }
   border: 1px solid var(--fg);
   background: var(--marquee-bg);
   pointer-events: none;
-  z-index: 5;
+  z-index: 8;
 }
 
 #marquee[hidden] { display: none; }
@@ -222,7 +236,8 @@ select { max-width: 180px; }
   overflow-wrap: anywhere;
   pointer-events: auto;
   touch-action: none;
-  z-index: 2;
+  /* 不设 z-index：设了会形成堆叠上下文，里面的连接点就超不过连线层。
+     容器压在方框下面靠渲染顺序保证（renderNodes 里先画容器）。 */
 }
 
 .node.sel {
@@ -251,7 +266,6 @@ select { max-width: 180px; }
   border: 1px dashed var(--group-border);
   border-radius: 6px;
   /* 容器压在普通方框下面，点容器内部空白才算点它 */
-  z-index: 1;
   align-items: flex-start;
   justify-content: flex-start;
   padding: 8px 12px;
@@ -284,7 +298,8 @@ select { max-width: 180px; }
   opacity: 0;
   /* 平时不接收事件，否则贴着边缘拖动节点会误拉出连线 */
   pointer-events: none;
-  z-index: 3;
+  /* 高于连线显示层（4），否则线头压在圆点上拖不动 */
+  z-index: 6;
   transition: opacity .12s;
 }
 
@@ -307,25 +322,4 @@ select { max-width: 180px; }
 /* 拖线时鼠标停在哪个连接点上，加深提示 */
 .port.over {
   background: var(--fg);
-}
-
-/* ---------- 右下角缩放手柄 ---------- */
-
-.resize {
-  position: absolute;
-  right: -4px;
-  bottom: -4px;
-  width: 8px;
-  height: 8px;
-  border: 1px solid var(--node-border);
-  background: var(--bg);
-  cursor: nwse-resize;
-  opacity: 0;
-  pointer-events: none;
-  z-index: 3;
-}
-
-.node.sel .resize {
-  opacity: 1;
-  pointer-events: auto;
 }

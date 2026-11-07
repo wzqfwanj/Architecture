@@ -122,7 +122,7 @@ check('右键不拖动画布', c1.view.x === c0.view.x && c1.view.y === c0.view.
 
 // ===== 7. 中键拖动后，连线仍跟着走 =====
 const wireOk = await cdp.eval(`(() => {
-  const p = document.querySelector('#wireLayer path:not(.hit)');
+  const p = document.querySelector('#wireLayer path');
   const t = document.getElementById('wireLayer').getAttribute('transform');
   return { path: p?.getAttribute('d') || null, transform: t, view: { x: view.x, y: view.y } };
 })()`);

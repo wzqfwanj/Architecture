@@ -111,7 +111,7 @@ for (const [fromSide, toSide] of pairs) {
     if (!e) return null;
     const geo = edgeGeometry(e);
     return { ...e, p1: geo.p1, p2: geo.p2, pts: geo.points, total: state.edges.length,
-             d: document.querySelector('#wireLayer path:not(.hit)')?.getAttribute('d') };
+             d: document.querySelector('#wireLayer path')?.getAttribute('d') };
   })()`);
 
   const expectP1 = { top: [270, 150], right: [340, 178], bottom: [270, 206], left: [200, 178] }[fromSide];
@@ -133,7 +133,7 @@ for (const [fromSide, toSide] of pairs) {
 await setup();
 await dragTo(await portScreen('n1', 'right'), await portScreen('n2', 'left'));
 const ortho = await cdp.eval(`(() => {
-  const d = document.querySelector('#wireLayer path:not(.hit)').getAttribute('d');
+  const d = document.querySelector('#wireLayer path').getAttribute('d');
   const geo = edgeGeometry(state.edges[0]);
   return { d, pts: geo.points };
 })()`);
@@ -178,7 +178,7 @@ await cdp.send('Page.navigate', { url: BASE + '/?reload=' + Date.now() });
 await sleep(2200);
 const after = await cdp.eval(`(() => ({
   edges: state.edges.map(e => e.fromSide + '->' + e.toSide),
-  paths: [...document.querySelectorAll('#wireLayer path:not(.hit)')].map(p => p.getAttribute('d')),
+  paths: [...document.querySelectorAll('#wireLayer path')].map(p => p.getAttribute('d')),
   ortho: state.edges.every(e => {
     const g = edgeGeometry(e);
     return g.points.slice(1).every((p, i) => p.x === g.points[i].x || p.y === g.points[i].y);
@@ -199,7 +199,7 @@ await cdp.eval(`(() => {
 })()`);
 await sleep(200);
 const legacy = await cdp.eval(`(() => {
-  const p = document.querySelector('#wireLayer path:not(.hit)');
+  const p = document.querySelector('#wireLayer path');
   const geo = edgeGeometry(state.edges[0]);
   return { d: p?.getAttribute('d') || null, pts: geo.points, s1: geo.s1, s2: geo.s2 };
 })()`);

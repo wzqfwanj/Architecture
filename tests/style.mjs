@@ -122,15 +122,17 @@ check('容器选中也无 outline 且仍是虚线',
       groupStyle.outlineStyle === 'none' && groupStyle.borderWidth === '2px' && groupStyle.borderStyle === 'dashed' && groupStyle.w === 300,
       `outline=${groupStyle.outlineStyle} border=${groupStyle.borderWidth} ${groupStyle.borderStyle} 宽=${groupStyle.w}`);
 
-// 缩放手柄尺寸
-const handleStyle = await cdp.eval(`(() => {
+// 右下角手柄已移除
+const handleGone = await cdp.eval(`(() => {
   const n = document.querySelector('.node:not(.group)');
   selection.clear(); selection.add(n.dataset.id);
   markSelection();
-  const cs = getComputedStyle(n.querySelector('.resize'));
-  return { w: parseFloat(cs.width), h: parseFloat(cs.height), opacity: cs.opacity };
+  return { dom: document.querySelectorAll('.resize').length,
+           classes: [...n.children].map(c => c.className) };
 })()`);
-check('缩放手柄同为 8px', handleStyle.w === 8 && handleStyle.h === 8, `${handleStyle.w}x${handleStyle.h}`);
+check('右下角手柄已移除',
+      handleGone.dom === 0 && !handleGone.classes.includes('resize'),
+      `DOM=${handleGone.dom} 子元素=${JSON.stringify(handleGone.classes)}`);
 
 const failed = results.filter(r => !r).length;
 console.log(`\n通过 ${results.length - failed}/${results.length}`);

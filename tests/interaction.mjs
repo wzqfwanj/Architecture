@@ -141,7 +141,7 @@ const check = (name, ok, detail) => {
   check('空白处双击新建', countAfter === countBefore + 1, `${countBefore} -> ${countAfter}`);
 
   // ===== 场景 5：圆点拖出连线 =====
-  const wireBefore = await cdp.eval("document.querySelectorAll('#wireLayer path:not(.hit)').length");
+  const wireBefore = await cdp.eval("document.querySelectorAll('#wireLayer path').length");
   const port = await cdp.eval(`(() => {
     const nodes = document.querySelectorAll('.node');
     const n = nodes[nodes.length - 1];
@@ -152,7 +152,7 @@ const check = (name, ok, detail) => {
              tx: t.left + t.width/2, ty: t.top + t.height/2 };
   })()`);
   await dragBy(cdp, port.px, port.py, port.tx - port.px, port.ty - port.py, 8);
-  const wireAfter = await cdp.eval("document.querySelectorAll('#wireLayer path:not(.hit)').length");
+  const wireAfter = await cdp.eval("document.querySelectorAll('#wireLayer path').length");
   check('拖圆点连线', wireAfter === wireBefore + 1, `${wireBefore} -> ${wireAfter} 条`);
 
   // ===== 场景 6：Delete 删除选中节点 =====
