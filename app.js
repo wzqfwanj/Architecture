@@ -201,6 +201,7 @@ function startEdit(dom) {
 /* ---------------- 拖动节点 / 连线 ---------------- */
 
 el.nodes.addEventListener('pointerdown', ev => {
+  if (ev.button !== 0) return;   // 中键 / 右键交给画布处理
   const dom = ev.target.closest('.node');
   if (!dom) return;
   if (ev.target.isContentEditable) return;   // 正在改文字，交给浏览器处理光标
@@ -244,13 +245,28 @@ el.nodes.addEventListener('pointerdown', ev => {
 
 /* ---------------- 拖动画布（平移） ---------------- */
 
+// 中键默认会拉起自动滚动，一并挡掉，否则拖画布时页面会乱跳
+el.canvas.addEventListener('mousedown', ev => {
+  if (ev.button === 1) ev.preventDefault();
+});
+el.canvas.addEventListener('auxclick', ev => {
+  if (ev.button === 1) ev.preventDefault();
+});
+
 el.canvas.addEventListener('pointerdown', ev => {
-  if (ev.target.closest('.node')) return;   // 节点自己处理
+  const onNode = !!ev.target.closest('.node');
+  const middle = ev.button === 1;
+  // 中键：任何位置都能拖画布（包括按在节点上）
+  // 左键：只在空白处拖画布，按在节点上交给节点自己处理
+  if (!middle && (onNode || ev.button !== 0)) return;
+
+  ev.preventDefault();
   // 落在连线上也允许平移；松手时没移动才当作选中连线
-  const hit = ev.target.closest('path.hit');
+  const hit = middle ? null : ev.target.closest('path.hit');
   el.canvas.classList.add('panning');
   drag = {
     mode: 'pan',
+    middle,
     startX: ev.clientX,
     startY: ev.clientY,
     ox: view.x,
@@ -319,6 +335,8 @@ window.addEventListener('pointerup', ev => {
       // 平移取整，避免拖完留小数导致网格发虚
       view = { x: Math.round(view.x), y: Math.round(view.y) };
       applyView();
+    } else if (d.middle) {
+      // 中键点一下不动：什么都不做，别打乱当前选择
     } else if (d.edge) {
       select('edge', d.edge);            // 点在连线上没拖动：选中它
     } else {

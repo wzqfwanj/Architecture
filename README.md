@@ -15,7 +15,7 @@ python server.py 8123                          # 指定端口；不设密码时�
 
 ## 用法
 
-- 按住画布空白处拖动：平移画布（鼠标、触屏都可以）
+- 平移画布：鼠标中键在任意位置拖动，或左键拖动画布空白处（触屏直接拖空白处）
 - Home 键：把所有节点框回视野中央
 - 双击画布空白处：新建方框
 - 按住方框拖动：移动位置
@@ -70,6 +70,7 @@ chrome --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/cprof ab
 # 3. 跑
 node tests/interaction.mjs      # 拖动节点、双击编辑、连线、删除
 node tests/pan.mjs              # 平移画布、落点换算、Home 归位、view 存档
+node tests/middle.mjs           # 中键平移、中键按在节点上、左右键行为不受影响
 node tests/ports.mjs            # 四向连线、方向吸附、去重、旧存档兼容
 node tests/touch_save.mjs       # 触屏拖动、存档往返、明暗切换
 node tests/prod.mjs             # 线上回归（需改脚本里的地址和密码）
