@@ -176,19 +176,32 @@ select { max-width: 180px; }
   cursor: text;
 }
 
+/* 四个方向的连接点，拖出去就拉一条线 */
 .port {
   position: absolute;
-  right: -6px;
-  top: 50%;
   width: 11px;
   height: 11px;
-  margin-top: -5.5px;
   border-radius: 50%;
   border: 1px solid var(--node-border);
   background: var(--bg);
   cursor: crosshair;
   opacity: 0;
+  /* 平时不接收事件，否则贴着边缘拖动节点会误拉出连线 */
+  pointer-events: none;
 }
 
+.port[data-side="top"]    { left: 50%;  top: 0;    transform: translate(-50%, -50%); }
+.port[data-side="right"]  { left: 100%; top: 50%;  transform: translate(-50%, -50%); }
+.port[data-side="bottom"] { left: 50%;  top: 100%; transform: translate(-50%, -50%); }
+.port[data-side="left"]   { left: 0;    top: 50%;  transform: translate(-50%, -50%); }
+
 .node:hover .port,
-.node.sel .port { opacity: 1; }
+.node.sel .port {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 拖线时鼠标停在哪个连接点上，加深提示 */
+.port.over {
+  background: var(--fg);
+}

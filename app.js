@@ -25,6 +25,7 @@ let view = { x: 0, y: 0 };
 
 /* ---------------- 工具 ---------------- */
 
+const SIDES = ['top', 'right', 'bottom', 'left'];
 const nextId = () => 'n' + (uid++);
 const getNode = id => state.nodes.find(n => n.id === id);
 const nodeOf = dom => getNode(dom?.closest('.node')?.dataset.id);
@@ -61,6 +62,32 @@ function resetView() {
   applyView();
 }
 
+// 某条边中点的画布坐标，连线从这里出发 / 到这里落脚
+function portPoint(node, side) {
+  switch (side) {
+    case 'top': return { x: node.x + node.w / 2, y: node.y };
+    case 'right': return { x: node.x + node.w, y: node.y + node.h / 2 };
+    case 'bottom': return { x: node.x + node.w / 2, y: node.y + node.h };
+    case 'left': return { x: node.x, y: node.y + node.h / 2 };
+    default: return { x: node.x + node.w / 2, y: node.y + node.h / 2 };
+  }
+}
+
+// 松开时落在节点范围内但没对准连接点，就取离得最近的那条边
+function nearestSide(node, p) {
+  let best = 'top';
+  let bestD = Infinity;
+  for (const side of SIDES) {
+    const q = portPoint(node, side);
+    const d = (q.x - p.x) ** 2 + (q.y - p.y) ** 2;
+    if (d < bestD) { bestD = d; best = side; }
+  }
+  return best;
+}
+
+// 连线的唯一标识：同一个连接点之间才算重复
+const edgeKey = e => `${e.from}->${e.to}@${e.fromSide || ''}|${e.toSide || ''}`;
+
 // 从矩形中心朝目标点方向，取矩形边界上的交点
 function boundaryPoint(node, toward) {
   const cx = node.x + node.w / 2;
@@ -88,10 +115,13 @@ function renderNodes() {
     label.className = 'label';
     label.textContent = n.text;
 
-    const port = document.createElement('div');
-    port.className = 'port';
-
-    d.append(label, port);
+    d.append(label);
+    for (const side of SIDES) {
+      const port = document.createElement('div');
+      port.className = 'port';
+      port.dataset.side = side;
+      d.append(port);
+    }
     el.nodes.append(d);
   }
   applyView();
@@ -105,9 +135,11 @@ function drawEdges() {
     if (!a || !b) continue;
     const ca = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
     const cb = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
-    const d = `M${boundaryPoint(a, cb).x},${boundaryPoint(a, cb).y} ` +
-              `L${boundaryPoint(b, ca).x},${boundaryPoint(b, ca).y}`;
-    const key = e.from + '->' + e.to;
+    // 有记录方向就从那条边中点出发；旧存档没有方向，退化为边界交点
+    const p1 = e.fromSide ? portPoint(a, e.fromSide) : boundaryPoint(a, cb);
+    const p2 = e.toSide ? portPoint(b, e.toSide) : boundaryPoint(b, ca);
+    const d = `M${p1.x},${p1.y} L${p2.x},${p2.y}`;
+    const key = edgeKey(e);
 
     const hit = document.createElementNS(NS, 'path');
     hit.setAttribute('d', d);
@@ -177,11 +209,12 @@ el.nodes.addEventListener('pointerdown', ev => {
 
   ev.preventDefault();
 
-  if (ev.target.classList.contains('port')) {
+  const port = ev.target.closest('.port');
+  if (port) {
     tempPath = document.createElementNS(NS, 'path');
     tempPath.setAttribute('class', 'temp');
     tempPath.setAttribute('d', '');
-    drag = { mode: 'wire', from: node.id };
+    drag = { mode: 'wire', from: node.id, fromSide: port.dataset.side };
     drawEdges();
     return;
   }
@@ -260,8 +293,15 @@ window.addEventListener('pointermove', ev => {
     const from = getNode(drag.from);
     if (!from) return;
     const toward = toCanvas(ev.clientX, ev.clientY);
-    const p1 = boundaryPoint(from, toward);
+    const p1 = portPoint(from, drag.fromSide);
     tempPath.setAttribute('d', `M${p1.x},${p1.y} L${toward.x},${toward.y}`);
+    // 提示鼠标当前停在哪个连接点上
+    const overEl = document.elementFromPoint(ev.clientX, ev.clientY);
+    const overPort = overEl?.closest('.port');
+    for (const p of el.nodes.querySelectorAll('.port.over')) p.classList.remove('over');
+    if (overPort && overPort.closest('.node')?.dataset.id !== drag.from) {
+      overPort.classList.add('over');
+    }
   }
 });
 
@@ -288,10 +328,16 @@ window.addEventListener('pointerup', ev => {
   }
 
   if (d.mode === 'wire') {
-    const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.node');
-    const to = target?.dataset.id;
-    if (to && to !== d.from && !state.edges.some(e => e.from === d.from && e.to === to)) {
-      state.edges.push({ from: d.from, to });
+    for (const p of el.nodes.querySelectorAll('.port.over')) p.classList.remove('over');
+    const dropEl = document.elementFromPoint(ev.clientX, ev.clientY);
+    const to = dropEl?.closest('.node')?.dataset.id;
+    if (to && to !== d.from) {
+      const dropPort = dropEl.closest('.port');
+      const toSide = dropPort
+        ? dropPort.dataset.side
+        : nearestSide(getNode(to), toCanvas(ev.clientX, ev.clientY));
+      const edge = { from: d.from, to, fromSide: d.fromSide, toSide };
+      if (!state.edges.some(e => edgeKey(e) === edgeKey(edge))) state.edges.push(edge);
     }
     drawEdges();
     return;
@@ -380,7 +426,7 @@ document.addEventListener('keydown', ev => {
     state.nodes = state.nodes.filter(n => n.id !== id);
     state.edges = state.edges.filter(e => e.from !== id && e.to !== id);
   } else {
-    state.edges = state.edges.filter(e => e.from + '->' + e.to !== selected.id);
+    state.edges = state.edges.filter(e => edgeKey(e) !== selected.id);
   }
   selected = null;
   render();
