@@ -226,8 +226,11 @@ select { max-width: 180px; }
 }
 
 .node.sel {
-  outline: 2px solid var(--sel);
-  outline-offset: 2px;
+  /* 不用 outline：outline-offset 会在边框和轮廓之间露一圈背景，看着像双层环。
+     直接加粗边框，padding 同步减 1px，尺寸和文字位置都不跳。 */
+  border-width: 2px;
+  border-color: var(--sel);
+  padding: 5px 11px;
 }
 
 .node .label {
@@ -263,16 +266,17 @@ select { max-width: 180px; }
 }
 
 .node.group.sel {
-  outline: 2px solid var(--sel);
-  outline-offset: 2px;
+  border-width: 2px;
+  border-color: var(--sel);
+  padding: 7px 11px;
 }
 
 /* ---------- 连接点 ---------- */
 
 .port {
   position: absolute;
-  width: 11px;
-  height: 11px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   border: 1px solid var(--node-border);
   background: var(--bg);
@@ -281,6 +285,7 @@ select { max-width: 180px; }
   /* 平时不接收事件，否则贴着边缘拖动节点会误拉出连线 */
   pointer-events: none;
   z-index: 3;
+  transition: opacity .12s;
 }
 
 .port[data-side="top"]    { left: 50%;  top: 0;    transform: translate(-50%, -50%); }
@@ -288,8 +293,13 @@ select { max-width: 180px; }
 .port[data-side="bottom"] { left: 50%;  top: 100%; transform: translate(-50%, -50%); }
 .port[data-side="left"]   { left: 0;    top: 50%;  transform: translate(-50%, -50%); }
 
-.node:hover .port,
 .node.sel .port {
+  opacity: .45;
+  pointer-events: auto;
+}
+
+.node:hover .port,
+.node.sel:hover .port {
   opacity: 1;
   pointer-events: auto;
 }
@@ -303,10 +313,10 @@ select { max-width: 180px; }
 
 .resize {
   position: absolute;
-  right: -5px;
-  bottom: -5px;
-  width: 10px;
-  height: 10px;
+  right: -4px;
+  bottom: -4px;
+  width: 8px;
+  height: 8px;
   border: 1px solid var(--node-border);
   background: var(--bg);
   cursor: nwse-resize;
