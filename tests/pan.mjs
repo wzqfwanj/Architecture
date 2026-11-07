@@ -1,4 +1,4 @@
-// 验证画布平移：拖空白处移动视图、节点和连线跟随、双击新建坐标正确、Home 复位
+// 验证画布平移：中键拖动移动视图、节点和连线跟随、双击新建坐标正确、Home 复位
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const BASE = 'http://127.0.0.1:8123';
 
@@ -49,18 +49,30 @@ await cdp.send('Emulation.setDeviceMetricsOverride', { width: 900, height: 620, 
 await cdp.send('Page.navigate', { url: BASE + '/?pan=' + Date.now() });
 await sleep(2500);
 
-const mouse = (type, x, y) => cdp.send('Input.dispatchMouseEvent', {
-  type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, pointerType: 'mouse',
-});
+const mouse = (type, x, y, button = 'left', buttons = type === 'mouseReleased' ? 0 : 1) =>
+  cdp.send('Input.dispatchMouseEvent', { type, x, y, button, buttons, clickCount: 1, pointerType: 'mouse' });
 
-async function dragBlank(x, y, dx, dy, steps = 8) {
-  await mouse('mouseMoved', x, y);
-  await mouse('mousePressed', x, y);
+// 平移现在只能中键（左键拖空白改成框选了）
+async function panBy(x, y, dx, dy, steps = 8) {
+  await mouse('mouseMoved', x, y, 'none', 0);
+  await mouse('mousePressed', x, y, 'middle', 4);
   for (let i = 1; i <= steps; i++) {
-    await mouse('mouseMoved', x + (dx / steps) * i, y + (dy / steps) * i);
+    await mouse('mouseMoved', x + (dx / steps) * i, y + (dy / steps) * i, 'middle', 4);
     await sleep(25);
   }
-  await mouse('mouseReleased', x + dx, y + dy);
+  await mouse('mouseReleased', x + dx, y + dy, 'middle', 0);
+  await sleep(250);
+}
+
+// 左键拖节点
+async function dragNode(x, y, dx, dy, steps = 6) {
+  await mouse('mouseMoved', x, y, 'none', 0);
+  await mouse('mousePressed', x, y, 'left', 1);
+  for (let i = 1; i <= steps; i++) {
+    await mouse('mouseMoved', x + (dx / steps) * i, y + (dy / steps) * i, 'left', 1);
+    await sleep(25);
+  }
+  await mouse('mouseReleased', x + dx, y + dy, 'left', 0);
   await sleep(250);
 }
 
@@ -72,20 +84,17 @@ const snapshot = () => cdp.eval(`(() => {
     nodeLeft: parseFloat(n.style.left),
     screenCx: r.left + r.width / 2,
     screenCy: r.top + r.height / 2,
-    nodesTransform: getComputedStyle(document.getElementById('nodes')).transform,
     wireTransform: document.getElementById('wireLayer').getAttribute('transform'),
     bgPos: document.getElementById('canvas').style.backgroundPosition,
-    wireD: document.querySelector('#wireLayer path:not(.hit)')?.getAttribute('d') || null,
     count: document.querySelectorAll('.node').length,
   };
 })()`);
 
-// ---- 1. 平移空白处 ----
+// ---- 1. 中键拖动空白处平移 ----
 const s0 = await snapshot();
-await dragBlank(500, 480, 130, 90);
+await panBy(500, 480, 130, 90);
 const s1 = await snapshot();
-
-check('拖动空白处平移画布', s1.view.x === 130 && s1.view.y === 90,
+check('中键拖动平移画布', s1.view.x === 130 && s1.view.y === 90,
       `view (${s0.view.x},${s0.view.y}) -> (${s1.view.x},${s1.view.y})`);
 check('节点屏幕位置跟随平移', Math.abs(s1.screenCx - s0.screenCx - 130) < 1 && Math.abs(s1.screenCy - s0.screenCy - 90) < 1,
       `屏幕位移 (${Math.round(s1.screenCx - s0.screenCx)},${Math.round(s1.screenCy - s0.screenCy)})`);
@@ -107,7 +116,7 @@ const created = await cdp.eval(`(() => {
   const n = nodes[nodes.length - 1];
   const r = n.getBoundingClientRect();
   return { count: nodes.length, cx: r.left + r.width / 2, cy: r.top + r.height / 2,
-           left: parseFloat(n.style.left), top: parseFloat(n.style.top), view: { x: view.x, y: view.y } };
+           left: parseFloat(n.style.left), top: parseFloat(n.style.top) };
 })()`);
 check('平移后双击建节点落点正确',
       created.count === before + 1 &&
@@ -120,7 +129,7 @@ const nodeBefore = await cdp.eval(`(() => {
   const r = n.getBoundingClientRect();
   return { cx: r.left + r.width/2, cy: r.top + r.height/2, left: parseFloat(n.style.left), top: parseFloat(n.style.top) };
 })()`);
-await dragBlank(nodeBefore.cx, nodeBefore.cy, 40, 30);
+await dragNode(nodeBefore.cx, nodeBefore.cy, 40, 30);
 const nodeAfter = await cdp.eval(`(() => {
   const n = document.querySelector('.node');
   return { left: parseFloat(n.style.left), top: parseFloat(n.style.top), view: { x: view.x, y: view.y } };
@@ -130,7 +139,7 @@ check('平移后拖动节点位移正确',
       `节点 (${nodeBefore.left},${nodeBefore.top}) -> (${nodeAfter.left},${nodeAfter.top})，视图未动=${nodeAfter.view.x === 130}`);
 
 // ---- 4. Home 键把节点框回视野 ----
-await dragBlank(500, 480, -400, -300);   // 先把视图推到离谱的位置
+await panBy(500, 480, -400, -300);   // 先把视图推到离谱的位置
 await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Home', code: 'Home', windowsVirtualKeyCode: 36 });
 await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Home', code: 'Home', windowsVirtualKeyCode: 36 });
 await sleep(300);

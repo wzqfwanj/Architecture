@@ -1,4 +1,4 @@
-// 验证四个方向都能连线
+// 验证四向连线 + 直角折线
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const BASE = 'http://127.0.0.1:8123';
 
@@ -50,15 +50,14 @@ const mouse = (type, x, y) => cdp.send('Input.dispatchMouseEvent', {
   type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, pointerType: 'mouse',
 });
 
-// 把画布清空，摆两个已知坐标的节点，方便算坐标
 const setup = async () => {
   await cdp.eval(`(() => {
     state.nodes = [
-      { id: 'n1', x: 200, y: 150, w: 140, h: 56, text: 'A' },
-      { id: 'n2', x: 500, y: 350, w: 140, h: 56, text: 'B' },
+      { id: 'n1', x: 200, y: 150, w: 140, h: 56, text: 'A', kind: 'box' },
+      { id: 'n2', x: 500, y: 350, w: 140, h: 56, text: 'B', kind: 'box' },
     ];
     state.edges = [];
-    selected = null;
+    selection.clear(); selectedEdge = null;
     view = { x: 0, y: 0 };
     render();
     applyView();
@@ -66,14 +65,12 @@ const setup = async () => {
   await sleep(150);
 };
 
-// 取某个节点某条边连接点的屏幕坐标
 const portScreen = (nodeId, side) => cdp.eval(`(() => {
   const p = document.querySelector('.node[data-id="${nodeId}"] .port[data-side="${side}"]');
   const r = p.getBoundingClientRect();
   return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 })()`);
 
-// 从某处拖到某处（先 hover 让连接点可点）
 const dragTo = async (from, to) => {
   await mouse('mouseMoved', from.x, from.y);
   await sleep(60);
@@ -86,6 +83,13 @@ const dragTo = async (from, to) => {
   await sleep(250);
 };
 
+// 把 path 的 d 拆成点
+const parsePath = d => [...d.matchAll(/([ML])(-?[\d.]+),(-?[\d.]+)/g)]
+  .map(m => ({ cmd: m[1], x: +m[2], y: +m[3] }));
+
+// 每一段都必须水平或垂直
+const isOrthogonal = pts => pts.slice(1).every((p, i) => p.x === pts[i].x || p.y === pts[i].y);
+
 // ===== 1. 每个节点四个连接点 =====
 const ports = await cdp.eval(`(() => {
   const n = document.querySelector('.node');
@@ -95,72 +99,64 @@ const ports = await cdp.eval(`(() => {
 check('节点有四个连接点', ports.count === 4 && JSON.stringify(ports.sides) === JSON.stringify(['bottom', 'left', 'right', 'top']),
       `count=${ports.count} sides=${ports.sides.join(',')}`);
 
-// ===== 2. 四个方向分别连一次 =====
-const pairs = [
-  ['top', 'bottom'],
-  ['right', 'left'],
-  ['bottom', 'top'],
-  ['left', 'right'],
-];
+// ===== 2. 四个方向分别连一次，起点终点落在边中点 =====
+const pairs = [['top', 'bottom'], ['right', 'left'], ['bottom', 'top'], ['left', 'right']];
 
 for (const [fromSide, toSide] of pairs) {
   await setup();
-  const a = await portScreen('n1', fromSide);
-  const b = await portScreen('n2', toSide);
-  await dragTo(a, b);
+  await dragTo(await portScreen('n1', fromSide), await portScreen('n2', toSide));
 
-  const edge = await cdp.eval(`(() => {
+  const info = await cdp.eval(`(() => {
     const e = state.edges[0];
     if (!e) return null;
-    const p = portPoint(getNode(e.from), e.fromSide);
-    const q = portPoint(getNode(e.to), e.toSide);
-    const path = document.querySelector('#wireLayer path:not(.hit)');
-    return { ...e, p, q, d: path?.getAttribute('d'), total: state.edges.length };
+    const geo = edgeGeometry(e);
+    return { ...e, p1: geo.p1, p2: geo.p2, pts: geo.points, total: state.edges.length,
+             d: document.querySelector('#wireLayer path:not(.hit)')?.getAttribute('d') };
   })()`);
 
-  const ok = edge && edge.fromSide === fromSide && edge.toSide === toSide &&
-             edge.p.x === 200 + (fromSide === 'right' ? 140 : fromSide === 'left' ? 0 : 70) &&
-             edge.q.x === 500 + (toSide === 'right' ? 140 : toSide === 'left' ? 0 : 70) &&
-             edge.total === 1;
-  check(`${fromSide} -> ${toSide} 连线`, !!ok,
-        edge ? `起点(${edge.p.x},${edge.p.y}) 终点(${edge.q.x},${edge.q.y}) path=${edge.d}` : '没有生成连线');
+  const expectP1 = { top: [270, 150], right: [340, 178], bottom: [270, 206], left: [200, 178] }[fromSide];
+  const expectP2 = { top: [570, 350], right: [640, 378], bottom: [570, 406], left: [500, 378] }[toSide];
+  const pts = info ? info.pts : [];
+  const ok = info &&
+    info.fromSide === fromSide && info.toSide === toSide && info.total === 1 &&
+    info.p1.x === expectP1[0] && info.p1.y === expectP1[1] &&
+    info.p2.x === expectP2[0] && info.p2.y === expectP2[1] &&
+    isOrthogonal(pts) &&
+    pts[0].x === expectP1[0] && pts[0].y === expectP1[1] &&
+    pts[pts.length - 1].x === expectP2[0] && pts[pts.length - 1].y === expectP2[1];
+
+  check(`${fromSide} -> ${toSide} 直角连线`, !!ok,
+        info ? `起点(${info.p1.x},${info.p1.y}) 终点(${info.p2.x},${info.p2.y}) 折点数=${pts.length} 全直角=${isOrthogonal(pts)} d=${info.d}` : '没有生成连线');
 }
 
-// ===== 3. 连线渲染的起点确实是边中点，不是边界交点 =====
+// ===== 3. 斜向的两个节点：路径必须是多段直角折线，不是斜直线 =====
 await setup();
-const aTop = await portScreen('n1', 'top');
-const bBottom = await portScreen('n2', 'bottom');
-await dragTo(aTop, bBottom);
-const rendered = await cdp.eval(`(() => {
+await dragTo(await portScreen('n1', 'right'), await portScreen('n2', 'left'));
+const ortho = await cdp.eval(`(() => {
   const d = document.querySelector('#wireLayer path:not(.hit)').getAttribute('d');
-  const m = d.match(/M([-\\d.]+),([-\\d.]+) L([-\\d.]+),([-\\d.]+)/);
-  return { d, from: { x: +m[1], y: +m[2] }, to: { x: +m[3], y: +m[4] } };
+  const geo = edgeGeometry(state.edges[0]);
+  return { d, pts: geo.points };
 })()`);
-check('连线从边中点出发到边中点',
-      rendered.from.x === 270 && rendered.from.y === 150 && rendered.to.x === 570 && rendered.to.y === 406,
-      `${JSON.stringify(rendered.from)} -> ${JSON.stringify(rendered.to)}`);
+const parsed = parsePath(ortho.d);
+check('斜向连线是直角折线而非直线',
+      parsed.length >= 3 && isOrthogonal(ortho.pts) && ortho.pts.length >= 3,
+      `段数=${parsed.length} 折点=${JSON.stringify(ortho.pts)}`);
 
-// ===== 4. 拖到节点中央（没对准连接点）自动吸附最近的边 =====
+// ===== 4. 落在节点空白处自动吸附最近边 =====
 await setup();
-const aCenter = await cdp.eval(`(() => {
-  const r = document.querySelector('.node[data-id="n1"]').getBoundingClientRect();
-  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-})()`);
-const bNode = await cdp.eval(`(() => {
+const bCenter = await cdp.eval(`(() => {
   const r = document.querySelector('.node[data-id="n2"]').getBoundingClientRect();
   return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
 })()`);
-// 从 A 右侧连接点拖到 B 的左上角区域（不是连接点）
-const aRight = await portScreen('n1', 'right');
-await dragTo(aRight, { x: bNode.cx - 60, y: bNode.cy - 20 });
+await dragTo(await portScreen('n1', 'right'), { x: bCenter.cx - 60, y: bCenter.cy - 20 });
 const snapped = await cdp.eval(`(() => ({ e: state.edges[0] || null, n: state.edges.length }))()`);
 check('落在节点空白处自动吸附最近边', snapped.n === 1 && ['top', 'left'].includes(snapped.e?.toSide),
       `toSide=${snapped.e?.toSide} fromSide=${snapped.e?.fromSide}`);
 
 // ===== 5. 同一对连接点不重复连 =====
+await setup();
 const aR = await portScreen('n1', 'right');
 const bL = await portScreen('n2', 'left');
-await setup();
 await dragTo(aR, bL);
 await dragTo(aR, bL);
 const dup = await cdp.eval('state.edges.length');
@@ -183,15 +179,19 @@ await sleep(2200);
 const after = await cdp.eval(`(() => ({
   edges: state.edges.map(e => e.fromSide + '->' + e.toSide),
   paths: [...document.querySelectorAll('#wireLayer path:not(.hit)')].map(p => p.getAttribute('d')),
+  ortho: state.edges.every(e => {
+    const g = edgeGeometry(e);
+    return g.points.slice(1).every((p, i) => p.x === g.points[i].x || p.y === g.points[i].y);
+  }),
 }))()`);
-check('重开保留方向且渲染一致', after.edges.length === 2 && after.paths.length === 2,
-      `${JSON.stringify(after.edges)} paths=${after.paths.length}`);
+check('重开保留方向且仍是直角', after.edges.length === 2 && after.paths.length === 2 && after.ortho,
+      `${JSON.stringify(after.edges)} 直角=${after.ortho}`);
 
-// ===== 8. 旧存档（无方向字段）仍能渲染 =====
+// ===== 8. 旧存档（无方向字段）推导方向后仍画直角 =====
 await cdp.eval(`(() => {
   state.nodes = [
-    { id: 'm1', x: 100, y: 100, w: 140, h: 56, text: '旧A' },
-    { id: 'm2', x: 400, y: 100, w: 140, h: 56, text: '旧B' },
+    { id: 'm1', x: 100, y: 100, w: 140, h: 56, text: '旧A', kind: 'box' },
+    { id: 'm2', x: 400, y: 260, w: 140, h: 56, text: '旧B', kind: 'box' },
   ];
   state.edges = [{ from: 'm1', to: 'm2' }];
   view = { x: 0, y: 0 };
@@ -200,9 +200,13 @@ await cdp.eval(`(() => {
 await sleep(200);
 const legacy = await cdp.eval(`(() => {
   const p = document.querySelector('#wireLayer path:not(.hit)');
-  return { d: p?.getAttribute('d') || null, n: state.edges.length };
+  const geo = edgeGeometry(state.edges[0]);
+  return { d: p?.getAttribute('d') || null, pts: geo.points, s1: geo.s1, s2: geo.s2 };
 })()`);
-check('旧存档无方向也能画线', !!legacy.d && /^M[\d.]+,[\d.]+ L[\d.]+,[\d.]+$/.test(legacy.d), `path=${legacy.d}`);
+const legacyOk = legacy.d && legacy.pts.length >= 3 &&
+  isOrthogonal(legacy.pts) && legacy.s1 === 'right' && legacy.s2 === 'left';
+check('旧存档无方向也能画直角', !!legacyOk,
+      `推得 ${legacy.s1}->${legacy.s2} 折点=${JSON.stringify(legacy.pts)}`);
 
 await fetch(BASE + '/api/diagrams/' + encodeURIComponent('四向测试'), { method: 'DELETE' });
 

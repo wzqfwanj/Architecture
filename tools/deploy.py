@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """一条命令完成：跑测试 -> 提交 -> 推送 -> 打包上传 -> 重启 -> 冒烟自检。
 
 用法（在仓库根目录或任意位置都能跑）：
@@ -40,10 +40,11 @@ CHROME_CANDIDATES = [
 ]
 
 # 快速测试只跑核心交互，全部测试包含平移/连线等
-QUICK_TESTS = ["tests/interaction.mjs", "tests/ports.mjs"]
+QUICK_TESTS = ["tests/interaction.mjs", "tests/ports.mjs", "tests/multi.mjs"]
 ALL_TESTS = [
     "tests/interaction.mjs",
     "tests/ports.mjs",
+    "tests/multi.mjs",
     "tests/pan.mjs",
     "tests/middle.mjs",
     "tests/touch_save.mjs",

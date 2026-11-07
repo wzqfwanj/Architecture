@@ -7,29 +7,59 @@ const el = {
   canvas: document.getElementById('canvas'),
   nodes: document.getElementById('nodes'),
   wireLayer: document.getElementById('wireLayer'),
+  marquee: document.getElementById('marquee'),
   name: document.getElementById('name'),
   list: document.getElementById('list'),
   save: document.getElementById('save'),
   del: document.getElementById('del'),
   theme: document.getElementById('theme'),
+  tools: [...document.querySelectorAll('.tool')],
 };
 
 const state = { name: '', nodes: [], edges: [] };
-let selected = null;      // { kind: 'node'|'edge', id }
 let uid = 1;
 let tempPath = null;
 let lastTap = null;
 let drag = null;
 // 画布视图位移：节点坐标不变，只移动整个视图，方便画大图
 let view = { x: 0, y: 0 };
+// 左侧栏选中的工具：select / box / group
+let tool = 'select';
+
+// 选择状态：可多选节点，一次最多选一条连线
+const selection = new Set();
+let selectedEdge = null;
+
+// 兼容旧写法 selected = {kind,id} / selected = null
+Object.defineProperty(window, 'selected', {
+  configurable: true,
+  get() {
+    if (selectedEdge) return { kind: 'edge', id: selectedEdge };
+    if (selection.size === 1) return { kind: 'node', id: [...selection][0] };
+    return null;
+  },
+  set(v) {
+    selection.clear();
+    selectedEdge = null;
+    if (!v) return;
+    if (v.kind === 'node') selection.add(v.id);
+    else if (v.kind === 'edge') selectedEdge = v.id;
+  },
+});
 
 /* ---------------- 工具 ---------------- */
 
 const SIDES = ['top', 'right', 'bottom', 'left'];
+const SIDE_NORMAL = {
+  top: { x: 0, y: -1 },
+  right: { x: 1, y: 0 },
+  bottom: { x: 0, y: 1 },
+  left: { x: -1, y: 0 },
+};
+const isHoriz = side => side === 'left' || side === 'right';
 const nextId = () => 'n' + (uid++);
 const getNode = id => state.nodes.find(n => n.id === id);
 const nodeOf = dom => getNode(dom?.closest('.node')?.dataset.id);
-const isSel = (kind, id) => selected && selected.kind === kind && selected.id === id;
 
 // 屏幕坐标 -> 画布坐标（要减掉视图位移）
 function toCanvas(clientX, clientY) {
@@ -85,30 +115,124 @@ function nearestSide(node, p) {
   return best;
 }
 
+// 旧存档没有方向时，按两节点的相对位置推断一组朝向
+function inferSides(a, b) {
+  const dx = (b.x + b.w / 2) - (a.x + a.w / 2);
+  const dy = (b.y + b.h / 2) - (a.y + a.h / 2);
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? ['right', 'left'] : ['left', 'right'];
+  }
+  return dy >= 0 ? ['bottom', 'top'] : ['top', 'bottom'];
+}
+
 // 连线的唯一标识：同一个连接点之间才算重复
 const edgeKey = e => `${e.from}->${e.to}@${e.fromSide || ''}|${e.toSide || ''}`;
 
-// 从矩形中心朝目标点方向，取矩形边界上的交点
-function boundaryPoint(node, toward) {
-  const cx = node.x + node.w / 2;
-  const cy = node.y + node.h / 2;
-  const dx = toward.x - cx;
-  const dy = toward.y - cy;
-  if (!dx && !dy) return { x: cx, y: cy };
-  const sx = Math.abs(dx) < 1e-6 ? Infinity : (node.w / 2) / Math.abs(dx);
-  const sy = Math.abs(dy) < 1e-6 ? Infinity : (node.h / 2) / Math.abs(dy);
-  const s = Math.min(sx, sy);
-  return { x: cx + dx * s, y: cy + dy * s };
+/* ---------------- 直角连线 ---------------- */
+
+// 去掉重复点和共线的中间点，避免路径里出现多余的折
+function tidy(points) {
+  const dedup = [];
+  for (const p of points) {
+    const q = dedup[dedup.length - 1];
+    if (q && q.x === p.x && q.y === p.y) continue;
+    dedup.push({ x: Math.round(p.x), y: Math.round(p.y) });
+  }
+  const out = [];
+  for (let i = 0; i < dedup.length; i++) {
+    const prev = out[out.length - 1];
+    const cur = dedup[i];
+    const next = dedup[i + 1];
+    if (prev && next) {
+      const sameX = prev.x === cur.x && cur.x === next.x;
+      const sameY = prev.y === cur.y && cur.y === next.y;
+      if (sameX || sameY) continue;
+    }
+    out.push(cur);
+  }
+  return out;
+}
+
+// 正交折线：先从两端沿法线伸出一小段，再用 L 型或 Z 型接上
+function orthoPoints(p1, s1, p2, s2, stub = 20) {
+  const n1 = SIDE_NORMAL[s1] || { x: 0, y: 0 };
+  const n2 = SIDE_NORMAL[s2] || { x: 0, y: 0 };
+  const a = { x: p1.x + n1.x * stub, y: p1.y + n1.y * stub };
+  const b = { x: p2.x + n2.x * stub, y: p2.y + n2.y * stub };
+  const h1 = isHoriz(s1);
+  const h2 = isHoriz(s2);
+
+  const pts = [p1, a];
+  if (h1 && h2) {
+    const mx = (a.x + b.x) / 2;
+    pts.push({ x: mx, y: a.y }, { x: mx, y: b.y });
+  } else if (!h1 && !h2) {
+    const my = (a.y + b.y) / 2;
+    pts.push({ x: a.x, y: my }, { x: b.x, y: my });
+  } else if (h1) {
+    pts.push({ x: b.x, y: a.y });
+  } else {
+    pts.push({ x: a.x, y: b.y });
+  }
+  pts.push(b, p2);
+  return tidy(pts);
+}
+
+function toPath(points) {
+  return points.map((p, i) => `${i ? 'L' : 'M'}${p.x},${p.y}`).join(' ');
+}
+
+// 一条连线的路径与端点信息
+function edgeGeometry(e) {
+  const a = getNode(e.from);
+  const b = getNode(e.to);
+  if (!a || !b) return null;
+  let [s1, s2] = [e.fromSide, e.toSide];
+  if (!s1 || !s2) [s1, s2] = inferSides(a, b);
+  const p1 = portPoint(a, s1);
+  const p2 = portPoint(b, s2);
+  return { points: orthoPoints(p1, s1, p2, s2), p1, p2, s1, s2 };
+}
+
+/* ---------------- 容器 ---------------- */
+
+// 节点中心落在容器里，就算它的成员
+function centerInside(inner, outer) {
+  const cx = inner.x + inner.w / 2;
+  const cy = inner.y + inner.h / 2;
+  return cx > outer.x && cx < outer.x + outer.w && cy > outer.y && cy < outer.y + outer.h;
+}
+
+function membersOf(group) {
+  return state.nodes.filter(n => n.id !== group.id && n.kind !== 'group' && centerInside(n, group));
+}
+
+// 拖动某个节点时，实际要一起移动的节点
+function moveTargets(anchorId) {
+  const ids = new Set(selection.has(anchorId) ? selection : [anchorId]);
+  for (const id of [...ids]) {
+    const n = getNode(id);
+    if (n && n.kind === 'group') for (const m of membersOf(n)) ids.add(m.id);
+  }
+  return [...ids].map(getNode).filter(Boolean);
 }
 
 /* ---------------- 渲染 ---------------- */
 
 function renderNodes() {
   el.nodes.textContent = '';
-  for (const n of state.nodes) {
+  // 容器先渲染，普通方框压在上面
+  const ordered = [...state.nodes].sort((a, b) => {
+    const ga = a.kind === 'group' ? 0 : 1;
+    const gb = b.kind === 'group' ? 0 : 1;
+    return ga - gb;
+  });
+
+  for (const n of ordered) {
     const d = document.createElement('div');
-    d.className = 'node' + (isSel('node', n.id) ? ' sel' : '');
+    d.className = 'node' + (n.kind === 'group' ? ' group' : '') + (selection.has(n.id) ? ' sel' : '');
     d.dataset.id = n.id;
+    d.dataset.kind = n.kind === 'group' ? 'group' : 'box';
     d.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px`;
 
     const label = document.createElement('div');
@@ -122,6 +246,10 @@ function renderNodes() {
       port.dataset.side = side;
       d.append(port);
     }
+    const handle = document.createElement('div');
+    handle.className = 'resize';
+    d.append(handle);
+
     el.nodes.append(d);
   }
   applyView();
@@ -130,15 +258,9 @@ function renderNodes() {
 function drawEdges() {
   el.wireLayer.textContent = '';
   for (const e of state.edges) {
-    const a = getNode(e.from);
-    const b = getNode(e.to);
-    if (!a || !b) continue;
-    const ca = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
-    const cb = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
-    // 有记录方向就从那条边中点出发；旧存档没有方向，退化为边界交点
-    const p1 = e.fromSide ? portPoint(a, e.fromSide) : boundaryPoint(a, cb);
-    const p2 = e.toSide ? portPoint(b, e.toSide) : boundaryPoint(b, ca);
-    const d = `M${p1.x},${p1.y} L${p2.x},${p2.y}`;
+    const geo = edgeGeometry(e);
+    if (!geo) continue;
+    const d = toPath(geo.points);
     const key = edgeKey(e);
 
     const hit = document.createElementNS(NS, 'path');
@@ -149,7 +271,7 @@ function drawEdges() {
     const line = document.createElementNS(NS, 'path');
     line.setAttribute('d', d);
     line.setAttribute('marker-end', 'url(#arrow)');
-    if (isSel('edge', key)) line.setAttribute('class', 'sel');
+    if (selectedEdge === key) line.setAttribute('class', 'sel');
 
     el.wireLayer.append(hit, line);
   }
@@ -168,9 +290,16 @@ function render() {
   drawEdges();
 }
 
+function clearSelection() {
+  selection.clear();
+  selectedEdge = null;
+}
+
 function select(kind, id) {
   commitEditing();
-  selected = kind ? { kind, id } : null;
+  clearSelection();
+  if (kind === 'node' && id) selection.add(id);
+  if (kind === 'edge' && id) selectedEdge = id;
   renderNodes();
   drawEdges();
 }
@@ -178,7 +307,7 @@ function select(kind, id) {
 // 只切换选中样式，不重建 DOM：按住的那个元素被移除，触屏上会直接触发 pointercancel
 function markSelection() {
   for (const d of el.nodes.children) {
-    d.classList.toggle('sel', isSel('node', d.dataset.id));
+    d.classList.toggle('sel', selection.has(d.dataset.id));
   }
 }
 
@@ -198,7 +327,35 @@ function startEdit(dom) {
   s.addRange(range);
 }
 
-/* ---------------- 拖动节点 / 连线 ---------------- */
+/* ---------------- 框选矩形 ---------------- */
+
+function showMarquee(x1, y1, x2, y2) {
+  const l = Math.min(x1, x2);
+  const t = Math.min(y1, y2);
+  el.marquee.hidden = false;
+  el.marquee.style.left = l + 'px';
+  el.marquee.style.top = t + 'px';
+  el.marquee.style.width = Math.abs(x2 - x1) + 'px';
+  el.marquee.style.height = Math.abs(y2 - y1) + 'px';
+}
+
+function hideMarquee() {
+  el.marquee.hidden = true;
+}
+
+/* ---------------- 工具切换 ---------------- */
+
+function setTool(name) {
+  tool = name;
+  for (const b of el.tools) b.classList.toggle('active', b.dataset.tool === name);
+  el.canvas.style.cursor = name === 'select' ? '' : 'crosshair';
+}
+
+for (const b of el.tools) {
+  b.addEventListener('click', () => setTool(b.dataset.tool));
+}
+
+/* ---------------- 节点上的交互 ---------------- */
 
 el.nodes.addEventListener('pointerdown', ev => {
   if (ev.button !== 0) return;   // 中键 / 右键交给画布处理
@@ -210,6 +367,7 @@ el.nodes.addEventListener('pointerdown', ev => {
 
   ev.preventDefault();
 
+  // 连接点：拉线
   const port = ev.target.closest('.port');
   if (port) {
     tempPath = document.createElementNS(NS, 'path');
@@ -220,6 +378,20 @@ el.nodes.addEventListener('pointerdown', ev => {
     return;
   }
 
+  // 右下角手柄：改大小
+  if (ev.target.classList.contains('resize')) {
+    drag = {
+      mode: 'resize',
+      id: node.id,
+      startX: ev.clientX,
+      startY: ev.clientY,
+      ow: node.w,
+      oh: node.h,
+      moved: false,
+    };
+    return;
+  }
+
   // 双击才进编辑，但要等松手且确认没移动才生效。
   // 否则「点一下、再按下拖动」会被当成双击，表现为拖不动。
   const now = performance.now();
@@ -227,23 +399,32 @@ el.nodes.addEventListener('pointerdown', ev => {
   lastTap = maybeEdit ? null : { id: node.id, t: now };
 
   commitEditing();
-  selected = { kind: 'node', id: node.id };
+
+  // 选择：shift 加选 / 已选中的保持整组 / 否则单选
+  if (ev.shiftKey) {
+    if (selection.has(node.id)) selection.delete(node.id);
+    else selection.add(node.id);
+    selectedEdge = null;
+  } else if (!selection.has(node.id)) {
+    clearSelection();
+    selection.add(node.id);
+  }
   markSelection();
   drawEdges();
 
+  const targets = moveTargets(node.id);
   drag = {
     mode: 'move',
     id: node.id,
     startX: ev.clientX,
     startY: ev.clientY,
-    ox: node.x,
-    oy: node.y,
+    items: targets.map(n => ({ id: n.id, ox: n.x, oy: n.y })),
     moved: false,
     maybeEdit,
   };
 });
 
-/* ---------------- 拖动画布（平移） ---------------- */
+/* ---------------- 画布上的交互 ---------------- */
 
 // 中键默认会拉起自动滚动，一并挡掉，否则拖画布时页面会乱跳
 el.canvas.addEventListener('mousedown', ev => {
@@ -255,24 +436,62 @@ el.canvas.addEventListener('auxclick', ev => {
 
 el.canvas.addEventListener('pointerdown', ev => {
   const onNode = !!ev.target.closest('.node');
-  const middle = ev.button === 1;
+
   // 中键：任何位置都能拖画布（包括按在节点上）
-  // 左键：只在空白处拖画布，按在节点上交给节点自己处理
-  if (!middle && (onNode || ev.button !== 0)) return;
+  if (ev.button === 1) {
+    ev.preventDefault();
+    el.canvas.classList.add('panning');
+    drag = {
+      mode: 'pan',
+      startX: ev.clientX,
+      startY: ev.clientY,
+      ox: view.x,
+      oy: view.y,
+      moved: false,
+    };
+    return;
+  }
+
+  if (ev.button !== 0 || onNode) return;
+
+  // 连线上按下：不框选，松手时没移动就选中它
+  const hit = ev.target.closest('path.hit');
+
+  // 触屏没有中键，拖空白处仍然平移画布，否则手机上没法移动视图
+  if (ev.pointerType === 'touch' && !hit) {
+    drag = { mode: 'pan', startX: ev.clientX, startY: ev.clientY, ox: view.x, oy: view.y, moved: false };
+    return;
+  }
 
   ev.preventDefault();
-  // 落在连线上也允许平移；松手时没移动才当作选中连线
-  const hit = middle ? null : ev.target.closest('path.hit');
-  el.canvas.classList.add('panning');
+
+  // 左侧栏选了方框 / 容器：拖出范围来创建
+  if (tool === 'box' || tool === 'group') {
+    // marquee 用的是画布内坐标，要减掉画布在页面里的位置
+    const r = el.canvas.getBoundingClientRect();
+    drag = {
+      mode: 'draw',
+      kind: tool,
+      startX: ev.clientX - r.left,
+      startY: ev.clientY - r.top,
+      moved: false,
+    };
+    el.canvas.classList.add('marqueeing');
+    showMarquee(drag.startX, drag.startY, drag.startX, drag.startY);
+    return;
+  }
+
+  // 默认：框选
+  const r = el.canvas.getBoundingClientRect();
   drag = {
-    mode: 'pan',
-    middle,
-    startX: ev.clientX,
-    startY: ev.clientY,
-    ox: view.x,
-    oy: view.y,
+    mode: 'marquee',
+    startX: ev.clientX - r.left,
+    startY: ev.clientY - r.top,
+    curX: ev.clientX - r.left,
+    curY: ev.clientY - r.top,
     moved: false,
     edge: hit ? hit.dataset.edge : null,
+    shift: ev.shiftKey,
   };
 });
 
@@ -289,6 +508,41 @@ window.addEventListener('pointermove', ev => {
     return;
   }
 
+  if (drag.mode === 'marquee' || drag.mode === 'draw') {
+    const r = el.canvas.getBoundingClientRect();
+    const cx = ev.clientX - r.left;
+    const cy = ev.clientY - r.top;
+    const dx = cx - drag.startX;
+    const dy = cy - drag.startY;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+    drag.moved = true;
+    if (drag.mode === 'marquee') {
+      drag.curX = cx;
+      drag.curY = cy;
+    }
+    el.canvas.classList.add('marqueeing');
+    showMarquee(drag.startX, drag.startY, cx, cy);
+    return;
+  }
+
+  if (drag.mode === 'resize') {
+    const node = getNode(drag.id);
+    if (!node) return;
+    const dx = ev.clientX - drag.startX;
+    const dy = ev.clientY - drag.startY;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 2) return;
+    drag.moved = true;
+    node.w = Math.max(40, Math.round(drag.ow + dx));
+    node.h = Math.max(30, Math.round(drag.oh + dy));
+    const dom = el.nodes.querySelector(`.node[data-id="${node.id}"]`);
+    if (dom) {
+      dom.style.width = node.w + 'px';
+      dom.style.height = node.h + 'px';
+    }
+    drawEdges();
+    return;
+  }
+
   if (drag.mode === 'move') {
     const dx = ev.clientX - drag.startX;
     const dy = ev.clientY - drag.startY;
@@ -296,52 +550,141 @@ window.addEventListener('pointermove', ev => {
     drag.moved = true;
     drag.maybeEdit = false;               // 移动过就不算双击
     lastTap = null;
-    const node = getNode(drag.id);
-    node.x = Math.round(drag.ox + dx);
-    node.y = Math.round(drag.oy + dy);
-    const dom = el.nodes.querySelector(`.node[data-id="${node.id}"]`);
-    if (dom) {
-      dom.style.left = node.x + 'px';
-      dom.style.top = node.y + 'px';
+    for (const item of drag.items) {
+      const node = getNode(item.id);
+      if (!node) continue;
+      node.x = Math.round(item.ox + dx);
+      node.y = Math.round(item.oy + dy);
+      const dom = el.nodes.querySelector(`.node[data-id="${node.id}"]`);
+      if (dom) {
+        dom.style.left = node.x + 'px';
+        dom.style.top = node.y + 'px';
+      }
     }
     drawEdges();
-  } else if (drag.mode === 'wire' && tempPath) {
+    return;
+  }
+
+  if (drag.mode === 'wire' && tempPath) {
     const from = getNode(drag.from);
     if (!from) return;
     const toward = toCanvas(ev.clientX, ev.clientY);
     const p1 = portPoint(from, drag.fromSide);
-    tempPath.setAttribute('d', `M${p1.x},${p1.y} L${toward.x},${toward.y}`);
+    // 预览也走直角折线，和最终效果一致
+    const hoverSide = hoveredPortSide(ev, drag.from) || oppositeSide(drag.fromSide);
+    tempPath.setAttribute('d', toPath(orthoPoints(p1, drag.fromSide, toward, hoverSide, 12)));
+
     // 提示鼠标当前停在哪个连接点上
-    const overEl = document.elementFromPoint(ev.clientX, ev.clientY);
-    const overPort = overEl?.closest('.port');
     for (const p of el.nodes.querySelectorAll('.port.over')) p.classList.remove('over');
+    const overPort = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.port');
     if (overPort && overPort.closest('.node')?.dataset.id !== drag.from) {
       overPort.classList.add('over');
     }
   }
 });
 
-window.addEventListener('blur', () => el.canvas.classList.remove('panning'));
+function oppositeSide(side) {
+  return { top: 'bottom', bottom: 'top', left: 'right', right: 'left' }[side] || 'left';
+}
+
+function hoveredPortSide(ev, excludeId) {
+  const el2 = document.elementFromPoint(ev.clientX, ev.clientY);
+  const port = el2?.closest('.port');
+  const node = port?.closest('.node');
+  if (!port || !node || node.dataset.id === excludeId) return null;
+  return port.dataset.side;
+}
+
+window.addEventListener('blur', () => {
+  el.canvas.classList.remove('panning', 'marqueeing');
+});
 
 window.addEventListener('pointerup', ev => {
   if (!drag) return;
   const d = drag;
   drag = null;
   tempPath = null;
+  hideMarquee();
+  el.canvas.classList.remove('panning', 'marqueeing');
 
   if (d.mode === 'pan') {
-    el.canvas.classList.remove('panning');
     if (d.moved) {
       // 平移取整，避免拖完留小数导致网格发虚
       view = { x: Math.round(view.x), y: Math.round(view.y) };
       applyView();
-    } else if (d.middle) {
-      // 中键点一下不动：什么都不做，别打乱当前选择
+    }
+    return;
+  }
+
+  if (d.mode === 'marquee') {
+    if (d.moved) {
+      // 框选：与矩形相交的节点都选上
+      const r = el.canvas.getBoundingClientRect();
+      const x1 = Math.min(d.startX, d.curX);
+      const y1 = Math.min(d.startY, d.curY);
+      const x2 = Math.max(d.startX, d.curX);
+      const y2 = Math.max(d.startY, d.curY);
+      const a = toCanvas(x1 + r.left, y1 + r.top);
+      const b = toCanvas(x2 + r.left, y2 + r.top);
+      if (!d.shift) clearSelection();
+      for (const n of state.nodes) {
+        const hitBox = n.x < b.x && n.x + n.w > a.x && n.y < b.y && n.y + n.h > a.y;
+        if (hitBox) selection.add(n.id);
+      }
+      renderNodes();
+      drawEdges();
     } else if (d.edge) {
       select('edge', d.edge);            // 点在连线上没拖动：选中它
     } else {
       select(null);                      // 点空白：取消选择
     }
+    return;
+  }
+
+  if (d.mode === 'draw') {
+    // 拖出的范围就是新节点的大小；没拖动则用默认尺寸
+    const r = el.canvas.getBoundingClientRect();
+    const p1 = toCanvas(d.startX + r.left, d.startY + r.top);
+    const p2 = toCanvas(ev.clientX, ev.clientY);
+    const isGroup = d.kind === 'group';
+    const minW = isGroup ? 80 : 40;
+    const minH = isGroup ? 60 : 30;
+    const defW = isGroup ? 260 : 140;
+    const defH = isGroup ? 180 : 56;
+
+    let w = Math.abs(p2.x - p1.x);
+    let h = Math.abs(p2.y - p1.y);
+    let x = Math.min(p1.x, p2.x);
+    let y = Math.min(p1.y, p2.y);
+
+    if (w < minW || h < minH) {
+      // 单击（或拖得太小）：居中出现一个默认大小的节点
+      w = defW;
+      h = defH;
+      x = p1.x - defW / 2;
+      y = p1.y - defH / 2;
+    }
+
+    const node = {
+      id: nextId(),
+      x: Math.round(x),
+      y: Math.round(y),
+      w: Math.round(w),
+      h: Math.round(h),
+      text: isGroup ? '分组' : '节点',
+      kind: isGroup ? 'group' : 'box',
+    };
+    state.nodes.push(node);
+    setTool('select');
+    clearSelection();
+    selection.add(node.id);
+    render();
+    lastTap = { id: node.id, t: performance.now() };
+    return;
+  }
+
+  if (d.mode === 'resize') {
+    drawEdges();
     return;
   }
 
@@ -361,8 +704,8 @@ window.addEventListener('pointerup', ev => {
     return;
   }
 
-  // 双击的第二下：没拖动才算编辑
-  if (d.maybeEdit && !d.moved) {
+  // 双击的第二下：没拖动才算编辑（多选时不进编辑）
+  if (d.maybeEdit && !d.moved && selection.size === 1) {
     startEdit(el.nodes.querySelector(`.node[data-id="${d.id}"]`));
   }
   drawEdges();
@@ -372,6 +715,7 @@ window.addEventListener('pointerup', ev => {
 
 el.canvas.addEventListener('dblclick', ev => {
   if (ev.target.closest('.node')) return;
+  if (tool !== 'select') return;
   const p = toCanvas(ev.clientX, ev.clientY);
   const node = {
     id: nextId(),
@@ -380,6 +724,7 @@ el.canvas.addEventListener('dblclick', ev => {
     w: 140,
     h: 56,
     text: '节点',
+    kind: 'box',
   };
   state.nodes.push(node);
   render();
@@ -413,7 +758,7 @@ el.nodes.addEventListener('focusout', ev => {
   label.closest('.node')?.classList.remove('editing');
   const node = nodeOf(label);
   if (node) {
-    node.text = label.textContent.replace(/\s+/g, ' ').trim() || '节点';
+    node.text = label.textContent.replace(/\s+/g, ' ').trim() || (node.kind === 'group' ? '分组' : '节点');
     label.textContent = node.text;
   }
 });
@@ -436,17 +781,28 @@ document.addEventListener('keydown', ev => {
     resetView();
     return;
   }
+
+  // 工具快捷键
+  const key = ev.key.toLowerCase();
+  if (key === 'v') return setTool('select');
+  if (key === 'b') return setTool('box');
+  if (key === 'g') return setTool('group');
+
+  if (ev.key === 'Escape') return select(null);
+
   if (ev.key !== 'Delete' && ev.key !== 'Backspace') return;
-  if (!selected) return;
+  if (!selection.size && !selectedEdge) return;
   ev.preventDefault();
-  if (selected.kind === 'node') {
-    const id = selected.id;
-    state.nodes = state.nodes.filter(n => n.id !== id);
-    state.edges = state.edges.filter(e => e.from !== id && e.to !== id);
-  } else {
-    state.edges = state.edges.filter(e => edgeKey(e) !== selected.id);
+
+  if (selection.size) {
+    const ids = new Set(selection);
+    state.nodes = state.nodes.filter(n => !ids.has(n.id));
+    state.edges = state.edges.filter(e => !ids.has(e.from) && !ids.has(e.to));
   }
-  selected = null;
+  if (selectedEdge) {
+    state.edges = state.edges.filter(e => edgeKey(e) !== selectedEdge);
+  }
+  clearSelection();
   render();
 });
 
@@ -496,7 +852,10 @@ async function load(name) {
   const doc = await fetch(API + '/' + encodeURIComponent(name)).then(r => r.json());
   if (!doc || !Array.isArray(doc.nodes)) return;
   state.name = name;
-  state.nodes = doc.nodes;
+  state.nodes = doc.nodes.map(n => ({
+    ...n,
+    kind: n.kind === 'group' ? 'group' : 'box',
+  }));
   state.edges = Array.isArray(doc.edges) ? doc.edges : [];
   view = doc.view && Number.isFinite(doc.view.x) && Number.isFinite(doc.view.y)
     ? { x: doc.view.x, y: doc.view.y }
@@ -508,7 +867,7 @@ async function load(name) {
   }, 0) + 1;
   el.name.value = name;
   commitEditing();
-  selected = null;
+  clearSelection();
   render();
 }
 
@@ -537,7 +896,7 @@ async function removeCurrent() {
   state.name = '';
   el.name.value = '';
   view = { x: 0, y: 0 };
-  selected = null;
+  clearSelection();
   render();
   await refreshList();
 }
@@ -559,6 +918,7 @@ el.list.addEventListener('change', () => {
 
 (async function init() {
   applyTheme(localStorage.getItem('arch-theme') || 'light');
+  setTool('select');
   applyView();
   const names = await refreshList();
   if (names.length) {
@@ -567,10 +927,10 @@ el.list.addEventListener('change', () => {
   } else {
     // 空画布先给两个示例方框，否则用户不知道该干什么
     state.nodes = [
-      { id: nextId(), x: 80, y: 80, w: 140, h: 56, text: '浏览器' },
-      { id: nextId(), x: 320, y: 80, w: 140, h: 56, text: '服务端' },
+      { id: nextId(), x: 80, y: 80, w: 140, h: 56, text: '浏览器', kind: 'box' },
+      { id: nextId(), x: 320, y: 80, w: 140, h: 56, text: '服务端', kind: 'box' },
     ];
-    state.edges = [{ from: state.nodes[0].id, to: state.nodes[1].id }];
+    state.edges = [{ from: state.nodes[0].id, to: state.nodes[1].id, fromSide: 'right', toSide: 'left' }];
     render();
   }
 })();

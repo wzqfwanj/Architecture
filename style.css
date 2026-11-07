@@ -7,6 +7,9 @@
   --node-border: #111111;
   --sel: #111111;
   --grid: #eeeeee;
+  --group-bg: rgba(0, 0, 0, 0.035);
+  --group-border: #b4b4b4;
+  --marquee-bg: rgba(0, 0, 0, 0.07);
 }
 
 html[data-theme="dark"] {
@@ -18,6 +21,9 @@ html[data-theme="dark"] {
   --node-border: #f2f2f2;
   --sel: #f2f2f2;
   --grid: #1a1a1a;
+  --group-bg: rgba(255, 255, 255, 0.05);
+  --group-border: #4a4a4a;
+  --marquee-bg: rgba(255, 255, 255, 0.1);
 }
 
 * { box-sizing: border-box; }
@@ -83,11 +89,56 @@ input.name::placeholder { color: var(--muted); }
 
 select { max-width: 180px; }
 
+/* ---------- 主体：左侧栏 + 画布 ---------- */
+
+.workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.palette {
+  width: 148px;
+  flex: none;
+  border-right: 1px solid var(--line);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.palette-title {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 0 2px 2px;
+}
+
+.tool {
+  text-align: left;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.tool.active {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+}
+
+.palette-tip {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
 /* ---------- 画布 ---------- */
 
 #canvas {
   position: relative;
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   /* 触屏上不加这条，按下拖动会被当成滚动手势，直接发 pointercancel */
   touch-action: none;
@@ -96,13 +147,11 @@ select { max-width: 180px; }
     linear-gradient(var(--grid) 1px, transparent 1px),
     linear-gradient(90deg, var(--grid) 1px, transparent 1px);
   background-size: 24px 24px;
-  cursor: grab;
 }
 
-/* 拖动画布时换成抓紧的手型 */
-#canvas.panning {
-  cursor: grabbing;
-}
+/* 中键可平移；左键拖空白处是框选 */
+#canvas.panning { cursor: grabbing; }
+#canvas.marqueeing { cursor: crosshair; }
 
 #wires {
   position: absolute;
@@ -116,6 +165,9 @@ select { max-width: 180px; }
   fill: none;
   stroke: var(--fg);
   stroke-width: 1.5;
+  /* 直角折线的拐角略微磨圆 */
+  stroke-linejoin: round;
+  stroke-linecap: round;
 }
 
 /* 加宽的透明路径，方便点中细线 */
@@ -141,6 +193,18 @@ select { max-width: 180px; }
   pointer-events: none;
 }
 
+/* ---------- 框选矩形 ---------- */
+
+#marquee {
+  position: absolute;
+  border: 1px solid var(--fg);
+  background: var(--marquee-bg);
+  pointer-events: none;
+  z-index: 5;
+}
+
+#marquee[hidden] { display: none; }
+
 /* ---------- 节点 ---------- */
 
 .node {
@@ -158,6 +222,7 @@ select { max-width: 180px; }
   overflow-wrap: anywhere;
   pointer-events: auto;
   touch-action: none;
+  z-index: 2;
 }
 
 .node.sel {
@@ -176,7 +241,34 @@ select { max-width: 180px; }
   cursor: text;
 }
 
-/* 四个方向的连接点，拖出去就拉一条线 */
+/* ---------- 容器（分组框）---------- */
+
+.node.group {
+  background: var(--group-bg);
+  border: 1px dashed var(--group-border);
+  border-radius: 6px;
+  /* 容器压在普通方框下面，点容器内部空白才算点它 */
+  z-index: 1;
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 8px 12px;
+}
+
+.node.group .label {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  width: auto;
+  max-width: 100%;
+}
+
+.node.group.sel {
+  outline: 2px solid var(--sel);
+  outline-offset: 2px;
+}
+
+/* ---------- 连接点 ---------- */
+
 .port {
   position: absolute;
   width: 11px;
@@ -188,6 +280,7 @@ select { max-width: 180px; }
   opacity: 0;
   /* 平时不接收事件，否则贴着边缘拖动节点会误拉出连线 */
   pointer-events: none;
+  z-index: 3;
 }
 
 .port[data-side="top"]    { left: 50%;  top: 0;    transform: translate(-50%, -50%); }
@@ -204,4 +297,25 @@ select { max-width: 180px; }
 /* 拖线时鼠标停在哪个连接点上，加深提示 */
 .port.over {
   background: var(--fg);
+}
+
+/* ---------- 右下角缩放手柄 ---------- */
+
+.resize {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--node-border);
+  background: var(--bg);
+  cursor: nwse-resize;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.node.sel .resize {
+  opacity: 1;
+  pointer-events: auto;
 }

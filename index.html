@@ -15,22 +15,33 @@
   <select id="list"></select>
   <button id="del" title="删除当前图">删除</button>
   <span class="grow"></span>
-  <span class="hint">左键拖空白处或中键拖任意处平移画布 · 双击空白处新建方框 · 拖方框四边圆点连线 · Home 归位</span>
+  <span class="hint">左键框选 · 中键平移 · 双击改字 · 拖方框圆点连线 · Home 归位</span>
   <button id="theme" title="切换明暗">暗</button>
 </header>
 
-<main id="canvas">
-  <svg id="wires" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
-              markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-        <path class="arrowhead" d="M0,0 L10,5 L0,10 z"></path>
-      </marker>
-    </defs>
-    <g id="wireLayer"></g>
-  </svg>
-  <div id="nodes"></div>
-</main>
+<div class="workspace">
+  <aside class="palette">
+    <div class="palette-title">工具</div>
+    <button class="tool active" data-tool="select" title="选中、框选、拖动（V）">选择</button>
+    <button class="tool" data-tool="box" title="在画布上拖出大小，单击则默认大小（B）">方框</button>
+    <button class="tool" data-tool="group" title="在画布上拖出大小，可把其它方框包在里面（G）">容器</button>
+    <div class="palette-tip">选「容器」后在画布上按住拖出范围，方框落在里面就成了它的成员，拖动容器整体移动。</div>
+  </aside>
+
+  <main id="canvas">
+    <svg id="wires" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path class="arrowhead" d="M0,0 L10,5 L0,10 z"></path>
+        </marker>
+      </defs>
+      <g id="wireLayer"></g>
+    </svg>
+    <div id="nodes"></div>
+    <div id="marquee" hidden></div>
+  </main>
+</div>
 
 <script src="app.js"></script>
 </body>
