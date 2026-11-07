@@ -16,7 +16,7 @@ python server.py 8123                          # 指定端口；不设密码时�
 ## 用法
 
 - 双击画布空白处：新建方框
-- 拖动方框：移动位置
+- 按住方框拖动：移动位置（鼠标、触屏都可以）
 - 双击方框：改文字（Enter 确认，Esc 取消）
 - 从方框右侧圆点拖到另一个方框：连线
 - 点中连线或方框后按 Delete：删除（删方框会连带删掉它的连线）
@@ -43,6 +43,20 @@ python server.py 8123                          # 指定端口；不设密码时�
 | DELETE | `api/diagrams/<name>` | 删除 |
 
 所有接口都要 HTTP Basic 认证。存档名只允许中英文、数字、下划线和短横线，长度 1–50。
+
+## 测试
+
+`tests/` 下是端到端测试，用原生 WebSocket 直连 Chrome DevTools Protocol，不装任何依赖：
+
+```bash
+# 1. 起后端
+python server.py 8123
+# 2. 起一个带调试端口的无头 Chrome
+chrome --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/cprof about:blank
+# 3. 跑
+node tests/interaction.mjs      # 拖动、双击编辑、连线、删除
+node tests/touch_save.mjs       # 触屏拖动、存档往返、明暗切换
+```
 
 ## 部署（本项目的实际做法）
 
