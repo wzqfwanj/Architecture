@@ -89,12 +89,18 @@ const layers = await cdp.eval(`(() => {
     hitsBeforeNodes: !!(hits.compareDocumentPosition(nodes) & Node.DOCUMENT_POSITION_FOLLOWING),
     wireCount: document.querySelectorAll('#wireLayer path').length,
     hitCount: document.querySelectorAll('#hitLayer path').length,
+    // 点击层现在按段拆分，段数 = 折点数 - 1
+    segCount: (() => {
+      const g = edgeGeometry(state.edges[0]);
+      return g.points.length - 1;
+    })(),
+    hitAxes: [...document.querySelectorAll('#hitLayer path')].map(p => p.dataset.axis).join(','),
     portZ: cs(document.querySelector('.port')).zIndex,
   };
 })()`);
-check('连线分显示层与点击层',
-      layers.wireCount === 1 && layers.hitCount === 1,
-      `显示层=${layers.wireCount} 点击层=${layers.hitCount}`);
+check('连线分显示层与点击层（点击层按段拆分）',
+      layers.wireCount === 1 && layers.hitCount === layers.segCount && layers.hitCount >= 2,
+      `显示层=${layers.wireCount} 点击层=${layers.hitCount} 段数=${layers.segCount} 方向=${layers.hitAxes}`);
 check('显示层在节点之上（线不被遮挡）',
       layers.wiresZ === '4' && layers.nodesZ === 'auto',
       `#wires z=${layers.wiresZ} #nodes z=${layers.nodesZ}`);

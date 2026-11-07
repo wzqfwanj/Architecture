@@ -183,6 +183,10 @@ select { max-width: 180px; }
   cursor: pointer;
 }
 
+/* 横着的线段只能上下拖，竖着的只能左右拖，光标跟着提示 */
+#wireHits path[data-axis="h"] { cursor: ns-resize; }
+#wireHits path[data-axis="v"] { cursor: ew-resize; }
+
 #wires path {
   fill: none;
   stroke: var(--fg);

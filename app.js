@@ -180,6 +180,30 @@ function orthoPoints(p1, s1, p2, s2, stub = 20) {
   return tidy(pts);
 }
 
+// 把任意点序列补成直角折线：相邻两点不在一条轴上就插一个肘点。
+// startDir / endDir 用来保证进出节点的那一段沿着连接点法线方向。
+function orthogonalize(seq, startDir, endDir) {
+  const out = [{ x: seq[0].x, y: seq[0].y }];
+  let dir = startDir || null;      // 'h' 或 'v'
+  for (let i = 1; i < seq.length; i++) {
+    const P = out[out.length - 1];
+    const Q = seq[i];
+    const isLast = i === seq.length - 1;
+    if (P.x === Q.x || P.y === Q.y) {
+      out.push({ x: Q.x, y: Q.y });
+      dir = P.x === Q.x ? 'v' : 'h';
+      continue;
+    }
+    // 需要拐一次：preferH 为真表示先水平走，肘点取 (Q.x, P.y)
+    let preferH = dir ? dir === 'h' : true;
+    if (isLast && endDir) preferH = endDir === 'v';
+    const elbow = preferH ? { x: Q.x, y: P.y } : { x: P.x, y: Q.y };
+    out.push(elbow, { x: Q.x, y: Q.y });
+    dir = P.x === elbow.x ? 'v' : 'h';
+  }
+  return out;
+}
+
 function toPath(points) {
   return points.map((p, i) => `${i ? 'L' : 'M'}${p.x},${p.y}`).join(' ');
 }
@@ -362,7 +386,15 @@ function edgeGeometry(e) {
   if (!s1 || !s2) [s1, s2] = inferSides(a, b);
   const p1 = portPoint(a, s1);
   const p2 = portPoint(b, s2);
-  return { points: routePoints(p1, s1, p2, s2), p1, p2, s1, s2 };
+
+  // 手动拖过段落的连线以 bends 为准，没拖过才自动绕行
+  const manual = Array.isArray(e.bends) && e.bends.length;
+  const points = manual
+    ? tidy(orthogonalize([p1, ...e.bends, p2],
+        isHoriz(s1) ? 'h' : 'v', isHoriz(s2) ? 'h' : 'v'))
+    : routePoints(p1, s1, p2, s2);
+
+  return { points, p1, p2, s1, s2, manual: !!manual };
 }
 
 /* ---------------- 容器 ---------------- */
@@ -439,7 +471,7 @@ function drawEdges() {
   }
 
   for (const e of state.edges) {
-    const ck = edgeKey(e);
+    const ck = edgeKey(e) + '#' + (e.bends || []).map(p => p.x + ',' + p.y).join(';');
     let geo = routeCache.get(ck);
     if (geo === undefined) {
       geo = edgeGeometry(e);
@@ -449,11 +481,19 @@ function drawEdges() {
     const d = toPath(geo.points);
     const key = edgeKey(e);
 
-    // 点击用的加宽路径放低层，避免盖住节点
-    const hit = document.createElementNS(NS, 'path');
-    hit.setAttribute('d', d);
-    hit.dataset.edge = key;
-    el.hitLayer.append(hit);
+    // 点击用的加宽路径放低层，避免盖住节点。
+    // 每段单独一个元素，这样能拖某一段，也能按方向给出对应的光标。
+    const pts = geo.points;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const hit = document.createElementNS(NS, 'path');
+      hit.setAttribute('d', `M${a.x},${a.y} L${b.x},${b.y}`);
+      hit.dataset.edge = key;
+      hit.dataset.seg = String(i - 1);
+      hit.dataset.axis = a.y === b.y ? 'h' : 'v';
+      el.hitLayer.append(hit);
+    }
 
     // 看得见的线放高层，不被节点底色切断
     const line = document.createElementNS(NS, 'path');
@@ -606,12 +646,20 @@ el.nodes.addEventListener('pointerdown', ev => {
   drawEdges();
 
   const targets = moveTargets(node.id);
+  const moving = new Set(targets.map(n => n.id));
+  // 手动画过的折线要跟着节点一起平移，否则形状会被扯歪
+  const bendBackup = state.edges
+    .filter(e => moving.has(e.from) || moving.has(e.to))
+    .filter(e => Array.isArray(e.bends) && e.bends.length)
+    .map(e => ({ e, bends: e.bends.map(p => ({ x: p.x, y: p.y })) }));
+
   drag = {
     mode: 'move',
     id: node.id,
     startX: ev.clientX,
     startY: ev.clientY,
     items: targets.map(n => ({ id: n.id, ox: n.x, oy: n.y })),
+    bendBackup,
     moved: false,
     maybeEdit,
   };
@@ -647,6 +695,9 @@ el.canvas.addEventListener('pointerdown', ev => {
 
   if (ev.button !== 0 || onNode) return;
 
+  // 连线上按下：不框选，可以拖着走，也可以点一下选中
+  const hit = ev.target.closest('#wireHits path');
+
   // 自己判定画布双击。
   // 不能用原生 dblclick：第一次点击若选中了连线会重建 SVG，
   // 浏览器就认为两次点击的目标不同，不再派发 dblclick。
@@ -657,7 +708,22 @@ el.canvas.addEventListener('pointerdown', ev => {
     Math.abs(ev.clientY - lastTapCanvas.y) < 6;
   lastTapCanvas = isDouble ? null : { t: now, x: ev.clientX, y: ev.clientY };
 
-  if (isDouble && tool === 'select') {
+  // 双击连线的某一段：清掉手动折点，回到自动绕行。
+  // 只有这条线确实被手调过才这么做，否则双击仍按空白处处理（新建节点）。
+  if (isDouble && hit && tool === 'select') {
+    const edge = state.edges.find(x => edgeKey(x) === hit.dataset.edge);
+    if (edge && Array.isArray(edge.bends) && edge.bends.length) {
+      ev.preventDefault();
+      delete edge.bends;
+      routeCache.clear();
+      render();
+      select('edge', edgeKey(edge));
+      return;
+    }
+  }
+
+  if (isDouble && !(hit && state.edges.find(x => edgeKey(x) === hit.dataset.edge)?.bends?.length)
+      && tool === 'select') {
     ev.preventDefault();
     const p = toCanvas(ev.clientX, ev.clientY);
     const node = {
@@ -675,8 +741,24 @@ el.canvas.addEventListener('pointerdown', ev => {
     return;
   }
 
-  // 连线上按下：不框选，松手时没移动就选中它
-  const hit = ev.target.closest('#wireHits path');
+  // 线上按住：进入段落拖动（松手没动就当作选中）
+  if (hit) {
+    const edge = state.edges.find(x => edgeKey(x) === hit.dataset.edge);
+    const geo = edge ? edgeGeometry(edge) : null;
+    if (edge && geo) {
+      ev.preventDefault();
+      drag = {
+        mode: 'segs',
+        key: hit.dataset.edge,
+        seg: Number(hit.dataset.seg),
+        startX: ev.clientX,
+        startY: ev.clientY,
+        pts0: geo.points.map(p => ({ x: p.x, y: p.y })),
+        moved: false,
+      };
+      return;
+    }
+  }
 
   // 触屏没有中键，拖空白处仍然平移画布，否则手机上没法移动视图
   if (ev.pointerType === 'touch' && !hit) {
@@ -711,7 +793,6 @@ el.canvas.addEventListener('pointerdown', ev => {
     curX: ev.clientX - r.left,
     curY: ev.clientY - r.top,
     moved: false,
-    edge: hit ? hit.dataset.edge : null,
     shift: ev.shiftKey,
   };
 });
@@ -726,6 +807,92 @@ window.addEventListener('pointermove', ev => {
     drag.moved = true;
     view = { x: drag.ox + dx, y: drag.oy + dy };
     applyView();
+    return;
+  }
+
+  if (drag.mode === 'segs') {
+    const dx = ev.clientX - drag.startX;
+    const dy = ev.clientY - drag.startY;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+    drag.moved = true;
+
+    const edge = state.edges.find(x => edgeKey(x) === drag.key);
+    if (!edge) return;
+    const pts = drag.pts0;
+    const i = drag.seg;
+    const a = pts[i];
+    const b = pts[i + 1];
+    if (!a || !b) return;
+
+    // 只沿垂直方向移动这一段
+    const horiz = a.y === b.y;
+    const delta = horiz ? dy : dx;
+    const along = horiz ? 'y' : 'x';
+    const geo = edgeGeometry(edge);
+    const n1 = SIDE_NORMAL[geo.s1] || { x: 0, y: 0 };
+    const n2 = SIDE_NORMAL[geo.s2] || { x: 0, y: 0 };
+    const STUB = 20;
+
+    const shift = p => {
+      const q = { x: p.x, y: p.y };
+      q[along] = Math.round(p[along] + delta);
+      return q;
+    };
+
+    const atStart = i === 0;
+    const atEnd = i + 1 === pts.length - 1;
+
+    let out;
+    if (atStart && atEnd) {
+      // 整条线只有一段：造 S 形，两端各沿法线伸出后整体平移
+      out = horiz
+        ? [
+            pts[0],
+            { x: pts[0].x + n1.x * STUB, y: pts[0].y },
+            { x: pts[0].x + n1.x * STUB, y: pts[0].y + delta },
+            { x: pts[1].x + n2.x * STUB, y: pts[1].y + delta },
+            { x: pts[1].x + n2.x * STUB, y: pts[1].y },
+            pts[1],
+          ]
+        : [
+            pts[0],
+            { x: pts[0].x, y: pts[0].y + n1.y * STUB },
+            { x: pts[0].x + delta, y: pts[0].y + n1.y * STUB },
+            { x: pts[1].x + delta, y: pts[1].y + n2.y * STUB },
+            { x: pts[1].x, y: pts[1].y + n2.y * STUB },
+            pts[1],
+          ];
+    } else {
+      // 先按普通规则平移这一段的两个端点（贴着端口的那端不动）
+      const moved = pts.map(p => ({ x: p.x, y: p.y }));
+      if (!atStart) Object.assign(moved[i], shift(pts[i]));
+      if (!atEnd) Object.assign(moved[i + 1], shift(pts[i + 1]));
+
+      out = [];
+      for (let k = 0; k < moved.length; k++) {
+        // 起点没动、下一点动了：在起点旁边补一个 Jog，把线接到新位置
+        if (k === 1 && atStart) {
+          const p0 = moved[0];
+          const q = { x: p0.x + n1.x * STUB, y: p0.y + n1.y * STUB };
+          out.push(p0, q, horiz ? { x: q.x, y: moved[1].y } : { x: moved[1].x, y: q.y }, moved[1]);
+          continue;
+        }
+        // 终点没动、前一点动了：同理补 Jog 再进入端口
+        if (k === moved.length - 1 && atEnd) {
+          const pEnd = moved[moved.length - 1];
+          const prev = moved[moved.length - 2];
+          const q = { x: pEnd.x + n2.x * STUB, y: pEnd.y + n2.y * STUB };
+          out.push(prev, horiz ? { x: q.x, y: prev.y } : { x: prev.x, y: q.y }, q, pEnd);
+          continue;
+        }
+        out.push(moved[k]);
+      }
+    }
+
+    const bounds = tidy(out);
+    edge.bends = bounds.slice(1, -1);
+    routeCache.clear();
+    drawEdges();
     return;
   }
 
@@ -785,6 +952,9 @@ window.addEventListener('pointermove', ev => {
         dom.style.top = node.y + 'px';
       }
     }
+    for (const { e, bends } of drag.bendBackup) {
+      e.bends = bends.map(p => ({ x: Math.round(p.x + dx), y: Math.round(p.y + dy) }));
+    }
     drawEdges();
     return;
   }
@@ -837,6 +1007,12 @@ window.addEventListener('pointerup', ev => {
       view = { x: Math.round(view.x), y: Math.round(view.y) };
       applyView();
     }
+    return;
+  }
+
+  if (d.mode === 'segs') {
+    if (!d.moved) select('edge', d.key);   // 只是点了一下：选中这条线
+    else drawEdges();
     return;
   }
 
