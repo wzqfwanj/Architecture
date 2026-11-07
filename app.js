@@ -1,4 +1,4 @@
-﻿// Architecture —— 极简架构图编辑器
+// Architecture —— 极简架构图编辑器
 // 相对路径，方便挂在反向代理的子路径下（如 /arch/）
 const API = 'api/diagrams';
 const NS = 'http://www.w3.org/2000/svg';
@@ -20,6 +20,8 @@ let uid = 1;
 let tempPath = null;
 let lastTap = null;
 let drag = null;
+// 画布视图位移：节点坐标不变，只移动整个视图，方便画大图
+let view = { x: 0, y: 0 };
 
 /* ---------------- 工具 ---------------- */
 
@@ -27,6 +29,37 @@ const nextId = () => 'n' + (uid++);
 const getNode = id => state.nodes.find(n => n.id === id);
 const nodeOf = dom => getNode(dom?.closest('.node')?.dataset.id);
 const isSel = (kind, id) => selected && selected.kind === kind && selected.id === id;
+
+// 屏幕坐标 -> 画布坐标（要减掉视图位移）
+function toCanvas(clientX, clientY) {
+  const r = el.canvas.getBoundingClientRect();
+  return { x: clientX - r.left - view.x, y: clientY - r.top - view.y };
+}
+
+// 把视图位移应用到三层：节点层、连线层、背景网格
+function applyView() {
+  el.nodes.style.transform = `translate(${view.x}px, ${view.y}px)`;
+  el.wireLayer.setAttribute('transform', `translate(${view.x} ${view.y})`);
+  el.canvas.style.backgroundPosition = `${view.x}px ${view.y}px`;
+}
+
+// 把所有节点框回视野中央（Home 键）
+function resetView() {
+  if (!state.nodes.length) {
+    view = { x: 0, y: 0 };
+  } else {
+    const minX = Math.min(...state.nodes.map(n => n.x));
+    const minY = Math.min(...state.nodes.map(n => n.y));
+    const maxX = Math.max(...state.nodes.map(n => n.x + n.w));
+    const maxY = Math.max(...state.nodes.map(n => n.y + n.h));
+    const r = el.canvas.getBoundingClientRect();
+    view = {
+      x: Math.round(r.width / 2 - (minX + maxX) / 2),
+      y: Math.round(r.height / 2 - (minY + maxY) / 2),
+    };
+  }
+  applyView();
+}
 
 // 从矩形中心朝目标点方向，取矩形边界上的交点
 function boundaryPoint(node, toward) {
@@ -61,6 +94,7 @@ function renderNodes() {
     d.append(label, port);
     el.nodes.append(d);
   }
+  applyView();
 }
 
 function drawEdges() {
@@ -88,6 +122,7 @@ function drawEdges() {
     el.wireLayer.append(hit, line);
   }
   if (tempPath) el.wireLayer.append(tempPath);
+  el.wireLayer.setAttribute('transform', `translate(${view.x} ${view.y})`);
 }
 
 // 正在编辑的文字先落回 state，否则重绘会把它丢掉
@@ -131,7 +166,7 @@ function startEdit(dom) {
   s.addRange(range);
 }
 
-/* ---------------- 拖动 / 连线 ---------------- */
+/* ---------------- 拖动节点 / 连线 ---------------- */
 
 el.nodes.addEventListener('pointerdown', ev => {
   const dom = ev.target.closest('.node');
@@ -174,8 +209,36 @@ el.nodes.addEventListener('pointerdown', ev => {
   };
 });
 
+/* ---------------- 拖动画布（平移） ---------------- */
+
+el.canvas.addEventListener('pointerdown', ev => {
+  if (ev.target.closest('.node')) return;   // 节点自己处理
+  // 落在连线上也允许平移；松手时没移动才当作选中连线
+  const hit = ev.target.closest('path.hit');
+  el.canvas.classList.add('panning');
+  drag = {
+    mode: 'pan',
+    startX: ev.clientX,
+    startY: ev.clientY,
+    ox: view.x,
+    oy: view.y,
+    moved: false,
+    edge: hit ? hit.dataset.edge : null,
+  };
+});
+
 window.addEventListener('pointermove', ev => {
   if (!drag) return;
+
+  if (drag.mode === 'pan') {
+    const dx = ev.clientX - drag.startX;
+    const dy = ev.clientY - drag.startY;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+    drag.moved = true;
+    view = { x: drag.ox + dx, y: drag.oy + dy };
+    applyView();
+    return;
+  }
 
   if (drag.mode === 'move') {
     const dx = ev.clientX - drag.startX;
@@ -196,18 +259,33 @@ window.addEventListener('pointermove', ev => {
   } else if (drag.mode === 'wire' && tempPath) {
     const from = getNode(drag.from);
     if (!from) return;
-    const r = el.canvas.getBoundingClientRect();
-    const toward = { x: ev.clientX - r.left, y: ev.clientY - r.top };
+    const toward = toCanvas(ev.clientX, ev.clientY);
     const p1 = boundaryPoint(from, toward);
     tempPath.setAttribute('d', `M${p1.x},${p1.y} L${toward.x},${toward.y}`);
   }
 });
+
+window.addEventListener('blur', () => el.canvas.classList.remove('panning'));
 
 window.addEventListener('pointerup', ev => {
   if (!drag) return;
   const d = drag;
   drag = null;
   tempPath = null;
+
+  if (d.mode === 'pan') {
+    el.canvas.classList.remove('panning');
+    if (d.moved) {
+      // 平移取整，避免拖完留小数导致网格发虚
+      view = { x: Math.round(view.x), y: Math.round(view.y) };
+      applyView();
+    } else if (d.edge) {
+      select('edge', d.edge);            // 点在连线上没拖动：选中它
+    } else {
+      select(null);                      // 点空白：取消选择
+    }
+    return;
+  }
 
   if (d.mode === 'wire') {
     const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.node');
@@ -226,22 +304,15 @@ window.addEventListener('pointerup', ev => {
   drawEdges();
 });
 
-/* ---------------- 画布：双击新建 / 点空白取消选择 ---------------- */
-
-el.canvas.addEventListener('pointerdown', ev => {
-  if (ev.target.closest('.node')) return;
-  const hit = ev.target.closest('path.hit');
-  if (hit) return select('edge', hit.dataset.edge);
-  select(null);
-});
+/* ---------------- 画布：双击新建 ---------------- */
 
 el.canvas.addEventListener('dblclick', ev => {
   if (ev.target.closest('.node')) return;
-  const r = el.canvas.getBoundingClientRect();
+  const p = toCanvas(ev.clientX, ev.clientY);
   const node = {
     id: nextId(),
-    x: Math.round(ev.clientX - r.left - 70),
-    y: Math.round(ev.clientY - r.top - 28),
+    x: Math.round(p.x - 70),
+    y: Math.round(p.y - 28),
     w: 140,
     h: 56,
     text: '节点',
@@ -283,11 +354,24 @@ el.nodes.addEventListener('focusout', ev => {
   }
 });
 
-/* ---------------- 删除 ---------------- */
+/* ---------------- 键盘 ---------------- */
 
 document.addEventListener('keydown', ev => {
   const t = ev.target;
-  if (t.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA'].includes(t.tagName)) return;
+  const typing = t.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA'].includes(t.tagName);
+
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 's') {
+    ev.preventDefault();
+    save();
+    return;
+  }
+  if (typing) return;
+
+  if (ev.key === 'Home') {          // 节点全部框回视野
+    ev.preventDefault();
+    resetView();
+    return;
+  }
   if (ev.key !== 'Delete' && ev.key !== 'Backspace') return;
   if (!selected) return;
   ev.preventDefault();
@@ -350,6 +434,9 @@ async function load(name) {
   state.name = name;
   state.nodes = doc.nodes;
   state.edges = Array.isArray(doc.edges) ? doc.edges : [];
+  view = doc.view && Number.isFinite(doc.view.x) && Number.isFinite(doc.view.y)
+    ? { x: doc.view.x, y: doc.view.y }
+    : { x: 0, y: 0 };
   // 不能用 nodes.length：删过节点后 id 会撞
   uid = state.nodes.reduce((m, n) => {
     const num = parseInt(String(n.id).slice(1), 10);
@@ -367,7 +454,7 @@ async function save() {
   const res = await fetch(API + '/' + encodeURIComponent(name), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nodes: state.nodes, edges: state.edges }),
+    body: JSON.stringify({ nodes: state.nodes, edges: state.edges, view }),
   });
   if (!res.ok) return alert('保存失败：HTTP ' + res.status);
   state.name = name;
@@ -385,6 +472,7 @@ async function removeCurrent() {
   state.edges = [];
   state.name = '';
   el.name.value = '';
+  view = { x: 0, y: 0 };
   selected = null;
   render();
   await refreshList();
@@ -403,17 +491,11 @@ el.list.addEventListener('change', () => {
   if (el.list.value) load(el.list.value);
 });
 
-document.addEventListener('keydown', ev => {
-  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 's') {
-    ev.preventDefault();
-    save();
-  }
-});
-
 /* ---------------- 启动 ---------------- */
 
 (async function init() {
   applyTheme(localStorage.getItem('arch-theme') || 'light');
+  applyView();
   const names = await refreshList();
   if (names.length) {
     await load(names[0]);

@@ -96,6 +96,12 @@ select { max-width: 180px; }
     linear-gradient(var(--grid) 1px, transparent 1px),
     linear-gradient(90deg, var(--grid) 1px, transparent 1px);
   background-size: 24px 24px;
+  cursor: grab;
+}
+
+/* 拖动画布时换成抓紧的手型 */
+#canvas.panning {
+  cursor: grabbing;
 }
 
 #wires {

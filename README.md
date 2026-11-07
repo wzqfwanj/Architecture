@@ -15,8 +15,10 @@ python server.py 8123                          # 指定端口；不设密码时�
 
 ## 用法
 
+- 按住画布空白处拖动：平移画布（鼠标、触屏都可以）
+- Home 键：把所有节点框回视野中央
 - 双击画布空白处：新建方框
-- 按住方框拖动：移动位置（鼠标、触屏都可以）
+- 按住方框拖动：移动位置
 - 双击方框：改文字（Enter 确认，Esc 取消）
 - 从方框右侧圆点拖到另一个方框：连线
 - 点中连线或方框后按 Delete：删除（删方框会连带删掉它的连线）
@@ -32,6 +34,18 @@ python server.py 8123                          # 指定端口；不设密码时�
 | `ARCH_DATA` | `./data` | 存档目录 |
 
 存档是 `data/<名字>.json`，一图一文件，已在 `.gitignore` 里排除。
+
+存档结构：
+
+```json
+{
+  "nodes": [{ "id": "n1", "x": 80, "y": 80, "w": 140, "h": 56, "text": "浏览器" }],
+  "edges": [{ "from": "n1", "to": "n2" }],
+  "view":  { "x": 0, "y": 0 }
+}
+```
+
+`view` 是画布平移量，只影响显示，不影响节点自身坐标。
 
 ## API
 
@@ -54,8 +68,10 @@ python server.py 8123
 # 2. 起一个带调试端口的无头 Chrome
 chrome --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/cprof about:blank
 # 3. 跑
-node tests/interaction.mjs      # 拖动、双击编辑、连线、删除
+node tests/interaction.mjs      # 拖动节点、双击编辑、连线、删除
+node tests/pan.mjs              # 平移画布、落点换算、Home 归位、view 存档
 node tests/touch_save.mjs       # 触屏拖动、存档往返、明暗切换
+node tests/prod.mjs             # 线上回归（需改脚本里的地址和密码）
 ```
 
 ## 部署（本项目的实际做法）
