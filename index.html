@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="bar">
+  <span class="brand">Architecture</span>
+  <input id="name" class="name" spellcheck="false" placeholder="未命名">
+  <button id="save">保存</button>
+  <select id="list"></select>
+  <button id="del" title="删除当前图">删除</button>
+  <span class="grow"></span>
+  <span class="hint">双击空白处新建方框 · 拖方框右侧圆点到另一个方框连线</span>
+  <button id="theme" title="切换明暗">暗</button>
+</header>
+
+<main id="canvas">
+  <svg id="wires" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path class="arrowhead" d="M0,0 L10,5 L0,10 z"></path>
+      </marker>
+    </defs>
+    <g id="wireLayer"></g>
+  </svg>
+  <div id="nodes"></div>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

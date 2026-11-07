@@ -1,0 +1,186 @@
+:root {
+  --bg: #ffffff;
+  --fg: #111111;
+  --line: #d4d4d4;
+  --muted: #8a8a8a;
+  --node-bg: #ffffff;
+  --node-border: #111111;
+  --sel: #111111;
+  --grid: #eeeeee;
+}
+
+html[data-theme="dark"] {
+  --bg: #0e0e0e;
+  --fg: #f2f2f2;
+  --line: #2e2e2e;
+  --muted: #7c7c7c;
+  --node-bg: #0e0e0e;
+  --node-border: #f2f2f2;
+  --sel: #f2f2f2;
+  --grid: #1a1a1a;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.4 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---------- toolbar ---------- */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+
+.brand {
+  font-weight: 600;
+  letter-spacing: .3px;
+  margin-right: 4px;
+}
+
+.grow { flex: 1; }
+
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+button, select, input {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 10px;
+  outline: none;
+}
+
+button { cursor: pointer; }
+button:hover, select:hover { border-color: var(--fg); }
+button:active { transform: translateY(1px); }
+
+input.name {
+  width: 160px;
+  padding: 4px 8px;
+}
+
+input.name::placeholder { color: var(--muted); }
+
+select { max-width: 180px; }
+
+/* ---------- canvas ---------- */
+
+#canvas {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+#wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+#wires path {
+  fill: none;
+  stroke: var(--fg);
+  stroke-width: 1.5;
+}
+
+#wires path.hit {
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+#wires path.sel { stroke-width: 3; }
+
+#wires path.temp {
+  stroke-dasharray: 4 4;
+}
+
+#nodes {
+  position: absolute;
+  inset: 0;
+}
+
+/* ---------- node ---------- */
+
+.node {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  background: var(--node-bg);
+  border: 1px solid var(--node-border);
+  border-radius: 4px;
+  cursor: move;
+  user-select: none;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.node.sel {
+  outline: 2px solid var(--sel);
+  outline-offset: 2px;
+}
+
+.node .label {
+  outline: none;
+  width: 100%;
+  user-select: text;
+  cursor: text;
+}
+
+.node.editing {
+  cursor: text;
+}
+
+.port {
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  margin-top: -5.5px;
+  border-radius: 50%;
+  border: 1px solid var(--node-border);
+  background: var(--bg);
+  cursor: crosshair;
+  opacity: 0;
+}
+
+.node:hover .port,
+.node.sel .port { opacity: 1; }
+
+/* arrow head color follows theme */
+.arrowhead { fill: var(--fg); }
+
+/* #nodes 铺满画布，但只有节点本身接收事件，空白处要穿透到 SVG 连线和 canvas */
+#nodes { pointer-events: none; }
+.node { pointer-events: auto; }
