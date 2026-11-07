@@ -1,4 +1,4 @@
-﻿# Architecture
+# Architecture
 
 极简的架构图绘制工具。纯 HTML/CSS/JS 前端 + Python 标准库后端，零第三方依赖。
 
