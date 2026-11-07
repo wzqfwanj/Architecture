@@ -77,13 +77,18 @@ const layers = await cdp.eval(`(() => {
     nodesZ: getComputedStyle(nodes).zIndex,
     hitsBeforeNodes: !!(hits.compareDocumentPosition(nodes) & Node.DOCUMENT_POSITION_FOLLOWING),
     handleDom: document.querySelectorAll('.resize').length,
+  handleBg: (() => {
+    const g = document.querySelector('.resize');
+    return g ? getComputedStyle(g).backgroundColor : 'none';
+  })(),
   };
 })()`);
 check('线上已分两层连线', layers.hasHitLayer === true, `hitLayer=${layers.hasHitLayer}`);
 check('线上连线在节点之上', layers.wiresZ === '4' && layers.nodesZ === 'auto',
       `wires=${layers.wiresZ} nodes=${layers.nodesZ}`);
 check('线上点击层在节点之下', layers.hitsBeforeNodes === true, `DOM 顺序=${layers.hitsBeforeNodes}`);
-check('线上无右下角手柄', layers.handleDom === 0, `DOM=${layers.handleDom}`);
+check('线上右下角是细线角标', layers.handleDom > 0 && layers.handleBg !== 'rgb(255, 255, 255)',
+      `DOM=${layers.handleDom} 背景=${layers.handleBg}`);
 
 // 2. 线与节点重叠处像素
 await cdp.eval(`(() => {

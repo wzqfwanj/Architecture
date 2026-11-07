@@ -197,21 +197,25 @@ const picked = await cdp.eval(`({ edge: selectedEdge, sel: [...selection] })`);
 check('点空白处的线可选中它', !!picked.edge && picked.sel.length === 0,
       `selectedEdge=${picked.edge}`);
 
-// ---- 6. 右下角小方块已彻底移除 ----
-const noHandle = await cdp.eval(`(() => ({
-  dom: document.querySelectorAll('.resize').length,
-  code: /\.resize/.test(document.querySelector('style,link')?.outerHTML || '') ,
-  cssHas: [...document.styleSheets].some(s => { try { return [...s.cssRules].some(r => r.selectorText && r.selectorText.includes('.resize')); } catch { return false; } }),
-  jsHas: /resize/.test(document.querySelector('script[src]')?.src || ''),
-}))()`);
-const resizeFn = await cdp.eval(`(async () => {
-  const r = await fetch('app.js').then(r => r.text());
-  const c = await fetch('style.css').then(r => r.text());
-  return { js: /resize/.test(r), css: /\\.resize/.test(c) };
+// ---- 6. 右下角是细线角标，不是实心方块 ----
+const grip = await cdp.eval(`(() => {
+  const n = document.querySelector('.node');
+  selection.clear(); selection.add(n.dataset.id);
+  markSelection();
+  const g = n.querySelector('.resize');
+  const cs = getComputedStyle(g);
+  return { exists: !!g, bg: cs.backgroundColor,
+           borderRight: cs.borderRightWidth, borderBottom: cs.borderBottomWidth,
+           z: cs.zIndex, portZ: getComputedStyle(n.querySelector('.port')).zIndex };
 })()`);
-check('右下角小方块已移除',
-      noHandle.dom === 0 && !resizeFn.js && !resizeFn.css,
-      `DOM=${noHandle.dom} app.js 含 resize=${resizeFn.js} style.css 含 .resize=${resizeFn.css}`);
+check('右下角为细线 L 角标（无背景）',
+      grip.exists === true &&
+      (grip.bg === 'rgba(0, 0, 0, 0)' || grip.bg === 'transparent') &&
+      grip.borderRight === '1px' && grip.borderBottom === '1px',
+      `背景=${grip.bg} 边框=${grip.borderRight}/${grip.borderBottom}`);
+check('手柄层级高于连线层（不被线压住）',
+      +grip.z > 4,
+      `手柄 z=${grip.z}`);
 
 const failed = results.filter(r => !r).length;
 console.log(`\n通过 ${results.length - failed}/${results.length}`);

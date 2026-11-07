@@ -122,17 +122,26 @@ check('容器选中也无 outline 且仍是虚线',
       groupStyle.outlineStyle === 'none' && groupStyle.borderWidth === '2px' && groupStyle.borderStyle === 'dashed' && groupStyle.w === 300,
       `outline=${groupStyle.outlineStyle} border=${groupStyle.borderWidth} ${groupStyle.borderStyle} 宽=${groupStyle.w}`);
 
-// 右下角手柄已移除
-const handleGone = await cdp.eval(`(() => {
+// 右下角缩放手柄：细线 L 角标，选中才可见
+const gripStyle = await cdp.eval(`(() => {
   const n = document.querySelector('.node:not(.group)');
   selection.clear(); selection.add(n.dataset.id);
   markSelection();
-  return { dom: document.querySelectorAll('.resize').length,
-           classes: [...n.children].map(c => c.className) };
+  const g = n.querySelector('.resize');
+  const cs = getComputedStyle(g);
+  return { exists: !!g, borderRight: cs.borderRightWidth, borderBottom: cs.borderBottomWidth,
+           bg: cs.backgroundColor, opacity: cs.opacity,
+           pointer: cs.pointerEvents, cursor: cs.cursor, w: parseFloat(cs.width) };
 })()`);
-check('右下角手柄已移除',
-      handleGone.dom === 0 && !handleGone.classes.includes('resize'),
-      `DOM=${handleGone.dom} 子元素=${JSON.stringify(handleGone.classes)}`);
+check('选中后有细线 L 角标手柄',
+      gripStyle.exists === true && gripStyle.w === 9 &&
+      gripStyle.borderRight === '1px' && gripStyle.borderBottom === '1px' &&
+      (gripStyle.bg === 'rgba(0, 0, 0, 0)' || gripStyle.bg === 'transparent') &&
+      gripStyle.pointer === 'auto' && gripStyle.cursor === 'nwse-resize',
+      `尺寸=${gripStyle.w} 边框=${gripStyle.borderRight}/${gripStyle.borderBottom} 背景=${gripStyle.bg} 光标=${gripStyle.cursor}`);
+check('手柄不是实心方块（无背景色）',
+      gripStyle.bg === 'rgba(0, 0, 0, 0)' || gripStyle.bg === 'transparent',
+      `背景=${gripStyle.bg}`);
 
 const failed = results.filter(r => !r).length;
 console.log(`\n通过 ${results.length - failed}/${results.length}`);

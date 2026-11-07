@@ -209,25 +209,49 @@ check('容器先渲染且在方框下层',
       layer.hitAtMemberKind === 'box' && layer.hitAtGroupBlank === 'group',
       JSON.stringify(layer));
 
-// ===== 8. 右下角缩放手柄已移除 =====
+// ===== 8. 容器可以用手柄放大缩小 =====
 await setup();
-await cdp.eval(`(() => {
-  const n = document.querySelector('.node[data-id="b1"]');
-  selection.clear(); selection.add('b1'); markSelection();
+rect = await canvasRect();
+await cdp.eval(`document.querySelector('.tool[data-tool="group"]').click()`);
+await drag(rect.left + 30, rect.top + 30, rect.left + 360, rect.top + 160);
+await sleep(200);
+
+const gBefore = await cdp.eval(`(() => {
+  const g = state.nodes.find(n => n.kind === 'group');
+  const grip = document.querySelector('.node[data-kind="group"] .resize').getBoundingClientRect();
+  return { id: g.id, x: g.x, y: g.y, w: g.w, h: g.h,
+           members: membersOf(g).map(m => m.id).sort(),
+           gx: grip.left + grip.width / 2, gy: grip.top + grip.height / 2 };
 })()`);
-await sleep(150);
-const handleGone = await cdp.eval(`(() => {
-  const n = document.querySelector('.node.sel');
-  return {
-    domCount: document.querySelectorAll('.resize').length,
-    childCount: n ? n.children.length : 0,   // 只剩 label + 4 个端口 = 5
-    childClasses: n ? [...n.children].map(c => c.className) : [],
-  };
+await drag(gBefore.gx, gBefore.gy, gBefore.gx + 80, gBefore.gy + 50);
+const gAfter = await cdp.eval(`(() => {
+  const g = state.nodes.find(n => n.kind === 'group');
+  return { x: g.x, y: g.y, w: g.w, h: g.h, members: membersOf(g).map(m => m.id).sort(),
+           domW: document.querySelector('.node[data-kind="group"]').getBoundingClientRect().width };
 })()`);
-check('选中后也没有右下角手柄',
-      handleGone.domCount === 0 && handleGone.childCount === 5 &&
-      !handleGone.childClasses.includes('resize'),
-      `DOM=${handleGone.domCount} 子元素=${JSON.stringify(handleGone.childClasses)}`);
+check('拖容器手柄可放大',
+      gAfter.w - gBefore.w === 80 && gAfter.h - gBefore.h === 50 &&
+      gAfter.x === gBefore.x && gAfter.y === gBefore.y,
+      `${gBefore.w}x${gBefore.h} -> ${gAfter.w}x${gAfter.h}，位置未变=${gAfter.x === gBefore.x}`);
+check('放大后 DOM 尺寸同步', Math.abs(gAfter.domW - gAfter.w) < 1, `DOM 宽=${gAfter.domW} 数据宽=${gAfter.w}`);
+
+// 缩小：把容器缩到比成员还小，成员应被移出（中心点落在外面）
+const gShrink = await cdp.eval(`(() => {
+  const g = state.nodes.find(n => n.kind === 'group');
+  const grip = document.querySelector('.node[data-kind="group"] .resize').getBoundingClientRect();
+  return { gx: grip.left + grip.width / 2, gy: grip.top + grip.height / 2, w: g.w, h: g.h };
+})()`);
+await drag(gShrink.gx, gShrink.gy, gShrink.gx - 300, gShrink.gy - 120);
+const shrunk = await cdp.eval(`(() => {
+  const g = state.nodes.find(n => n.kind === 'group');
+  return { w: g.w, h: g.h, members: membersOf(g).map(m => m.id) };
+})()`);
+check('拖容器手柄可缩小，成员关系随之重算',
+      shrunk.w < gShrink.w && shrunk.h < gShrink.h,
+      `${gShrink.w}x${gShrink.h} -> ${shrunk.w}x${shrunk.h}，成员=${JSON.stringify(shrunk.members)}`);
+check('缩小有最小尺寸限制（容器 80x60）',
+      shrunk.w >= 80 && shrunk.h >= 60,
+      `缩到 ${shrunk.w}x${shrunk.h}`);
 
 // ===== 9. 容器 kind 存进存档并能还原 =====
 await cdp.eval(`(() => {

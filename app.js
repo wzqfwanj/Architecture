@@ -247,6 +247,11 @@ function renderNodes() {
       port.dataset.side = side;
       d.append(port);
     }
+    // 右下角缩放手柄：视觉上是一条细线 L 角标，选中才出现
+    const grip = document.createElement('div');
+    grip.className = 'resize';
+    d.append(grip);
+
     el.nodes.append(d);
   }
   applyView();
@@ -376,6 +381,24 @@ el.nodes.addEventListener('pointerdown', ev => {
     tempPath.setAttribute('d', '');
     drag = { mode: 'wire', from: node.id, fromSide: port.dataset.side };
     drawEdges();
+    return;
+  }
+
+  // 右下角手柄：调整大小
+  if (ev.target.classList.contains('resize')) {
+    commitEditing();
+    clearSelection();
+    selection.add(node.id);
+    markSelection();
+    drag = {
+      mode: 'resize',
+      id: node.id,
+      startX: ev.clientX,
+      startY: ev.clientY,
+      ow: node.w,
+      oh: node.h,
+      moved: false,
+    };
     return;
   }
 
@@ -509,6 +532,27 @@ window.addEventListener('pointermove', ev => {
     }
     el.canvas.classList.add('marqueeing');
     showMarquee(drag.startX, drag.startY, cx, cy);
+    return;
+  }
+
+  if (drag.mode === 'resize') {
+    const node = getNode(drag.id);
+    if (!node) return;
+    const dx = ev.clientX - drag.startX;
+    const dy = ev.clientY - drag.startY;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 2) return;
+    drag.moved = true;
+    // 容器要容得下里面的方框，最小尺寸比普通方框大一些
+    const minW = node.kind === 'group' ? 80 : 40;
+    const minH = node.kind === 'group' ? 60 : 30;
+    node.w = Math.max(minW, Math.round(drag.ow + dx));
+    node.h = Math.max(minH, Math.round(drag.oh + dy));
+    const dom = el.nodes.querySelector(`.node[data-id="${node.id}"]`);
+    if (dom) {
+      dom.style.width = node.w + 'px';
+      dom.style.height = node.h + 'px';
+    }
+    drawEdges();
     return;
   }
 
@@ -664,6 +708,13 @@ window.addEventListener('pointerup', ev => {
       const edge = { from: d.from, to, fromSide: d.fromSide, toSide };
       if (!state.edges.some(e => edgeKey(e) === edgeKey(edge))) state.edges.push(edge);
     }
+    drawEdges();
+    return;
+  }
+
+  if (d.mode === 'resize') {
+    // 尺寸变了，容器包住的成员可能增减，重绘让选中框和端口位置对齐
+    renderNodes();
     drawEdges();
     return;
   }

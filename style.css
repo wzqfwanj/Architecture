@@ -313,6 +313,35 @@ select { max-width: 180px; }
   pointer-events: auto;
 }
 
+/* ---------- 右下角缩放手柄 ---------- */
+
+/* 不画实心方块，只用两条细线拼一个 L 角标：能看出可以拖，又不抢眼 */
+.resize {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 9px;
+  height: 9px;
+  border-right: 1px solid var(--muted);
+  border-bottom: 1px solid var(--muted);
+  border-bottom-right-radius: 2px;
+  cursor: nwse-resize;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 6;
+  transition: opacity .12s;
+}
+
+.node.sel .resize {
+  opacity: .6;
+  pointer-events: auto;
+}
+
+.node.sel:hover .resize {
+  opacity: 1;
+  border-color: var(--fg);
+}
+
 .node:hover .port,
 .node.sel:hover .port {
   opacity: 1;

@@ -179,18 +179,29 @@ check('线上拖容器整体移动',
       gdx === 70 && gdy === 30 && m1x === 70 && m1y === 30,
       `容器 +(${gdx},${gdy}) 成员A +(${m1x},${m1y})`);
 
-// ---- 5. 右下角手柄已移除 ----
+// ---- 5. 右下角细线角标可调整大小 ----
 await setup();
 await sleep(200);
-const handleGone = await cdp.eval(`(() => {
+const gripInfo = await cdp.eval(`(() => {
   const n = document.querySelector('.node[data-id="b1"]');
   selection.clear(); selection.add('b1'); markSelection();
-  return { dom: document.querySelectorAll('.resize').length,
-           classes: [...n.children].map(c => c.className) };
+  const g = n.querySelector('.resize');
+  const cs = getComputedStyle(g);
+  const r = g.getBoundingClientRect();
+  return { exists: !!g, bg: cs.backgroundColor, cursor: cs.cursor,
+           gx: r.left + r.width / 2, gy: r.top + r.height / 2,
+           w: state.nodes[0].w, h: state.nodes[0].h };
 })()`);
-check('线上无右下角手柄',
-      handleGone.dom === 0 && !handleGone.classes.includes('resize'),
-      `DOM=${handleGone.dom} 子元素=${JSON.stringify(handleGone.classes)}`);
+check('线上有细线角标手柄',
+      gripInfo.exists === true && gripInfo.cursor === 'nwse-resize' &&
+      (gripInfo.bg === 'rgba(0, 0, 0, 0)' || gripInfo.bg === 'transparent'),
+      `背景=${gripInfo.bg} 光标=${gripInfo.cursor}`);
+
+await drag(gripInfo.gx, gripInfo.gy, gripInfo.gx + 60, gripInfo.gy + 30);
+const resized = await cdp.eval(`({ w: state.nodes[0].w, h: state.nodes[0].h })`);
+check('线上拖角标可调整大小',
+      resized.w - gripInfo.w === 60 && resized.h - gripInfo.h === 30,
+      `${gripInfo.w}x${gripInfo.h} -> ${resized.w}x${resized.h}`);
 
 // ---- 6. 存档往返（含 kind 与方向）----
 await cdp.eval(`(() => {
