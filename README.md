@@ -1,4 +1,4 @@
-# Architecture
+﻿# Architecture
 
 极简的架构图绘制工具。纯 HTML/CSS/JS 前端 + Python 标准库后端，零第三方依赖。
 
@@ -20,7 +20,7 @@ python server.py 8123                          # 指定端口；不设密码时�
 - 双击画布空白处：新建方框
 - 按住方框拖动：移动位置
 - 双击方框：改文字（Enter 确认，Esc 取消）
-- 从方框右侧圆点拖到另一个方框：连线
+- 从方框上/下/左/右任意一个圆点拖到另一个方框的圆点：连线（拖到方框范围内没对准圆点时，自动吸附最近的一条边）
 - 点中连线或方框后按 Delete：删除（删方框会连带删掉它的连线）
 - 顶部填名字 → 保存（或 Ctrl+S）；下拉框切换存档；删除按钮删当前存档
 - 右上角切换明暗，黑白配色，选择记在 localStorage
@@ -40,12 +40,12 @@ python server.py 8123                          # 指定端口；不设密码时�
 ```json
 {
   "nodes": [{ "id": "n1", "x": 80, "y": 80, "w": 140, "h": 56, "text": "浏览器" }],
-  "edges": [{ "from": "n1", "to": "n2" }],
+  "edges": [{ "from": "n1", "to": "n2", "fromSide": "right", "toSide": "left" }],
   "view":  { "x": 0, "y": 0 }
 }
 ```
 
-`view` 是画布平移量，只影响显示，不影响节点自身坐标。
+romSide / 	oSide 是连接方向（top / right / bottom / left），缺省时按两节点中心的边界交点绘制，兼容早期存档。iew 是画布平移量，只影响显示，不影响节点自身坐标。
 
 ## API
 
@@ -70,6 +70,7 @@ chrome --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/cprof ab
 # 3. 跑
 node tests/interaction.mjs      # 拖动节点、双击编辑、连线、删除
 node tests/pan.mjs              # 平移画布、落点换算、Home 归位、view 存档
+node tests/ports.mjs            # 四向连线、方向吸附、去重、旧存档兼容
 node tests/touch_save.mjs       # 触屏拖动、存档往返、明暗切换
 node tests/prod.mjs             # 线上回归（需改脚本里的地址和密码）
 ```
