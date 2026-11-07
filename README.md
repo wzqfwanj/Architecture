@@ -60,23 +60,48 @@ python server.py 8123                          # 指定端口；不设密码时�
 
 ## 测试
 
-`tests/` 下是端到端测试，用原生 WebSocket 直连 Chrome DevTools Protocol，不装任何依赖：
+`tests/` 下是端到端测试，用原生 WebSocket 直连 Chrome DevTools Protocol，不装任何依赖。
+平时不用手动起服务，`tools/deploy.py` 会自动拉起本地服务和无头 Chrome：
+
+| 脚本 | 覆盖内容 |
+| --- | --- |
+| `tests/interaction.mjs` | 拖动节点、双击编辑、连线、删除 |
+| `tests/ports.mjs` | 四向连线、方向吸附、去重、旧存档兼容 |
+| `tests/pan.mjs` | 平移画布、落点换算、Home 归位、view 存档 |
+| `tests/middle.mjs` | 中键平移、中键按在节点上、左右键行为不受影响 |
+| `tests/touch_save.mjs` | 触屏拖动、存档往返、明暗切换 |
+| `tests/prod*.mjs` | 线上回归，不参与本地自动跑 |
+
+也可以手动跑单个：
 
 ```bash
-# 1. 起后端
-python server.py 8123
-# 2. 起一个带调试端口的无头 Chrome
-chrome --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/cprof about:blank
-# 3. 跑
-node tests/interaction.mjs      # 拖动节点、双击编辑、连线、删除
-node tests/pan.mjs              # 平移画布、落点换算、Home 归位、view 存档
-node tests/middle.mjs           # 中键平移、中键按在节点上、左右键行为不受影响
-node tests/ports.mjs            # 四向连线、方向吸附、去重、旧存档兼容
-node tests/touch_save.mjs       # 触屏拖动、存档往返、明暗切换
-node tests/prod.mjs             # 线上回归（需改脚本里的地址和密码）
+python server.py 8123 &
+chrome --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/cprof about:blank &
+node tests/ports.mjs
 ```
 
-## 部署（本项目的实际做法）
+## 开发与部署
+
+一条命令搞定「跑测试 → 提交 → 推送 GitHub → 部署到 dev → 冒烟自检」：
+
+```bash
+python tools/deploy.py                       # 快速测试 + 提交 + 推送 + 部署
+python tools/deploy.py -m "修复 xxx"          # 指定提交信息
+python tools/deploy.py --tests none          # 只改文档时跳过测试
+python tools/deploy.py --tests all           # 跑全部本地测试
+python tools/deploy.py --no-push             # 只部署到 dev，不推 GitHub
+python tools/deploy.py --dry-run             # 看看会做什么
+```
+
+脚本做的事：
+
+1. 需要时自动拉起 `server.py`（本地 8123）和带调试端口的无头 Chrome，跑完自动收掉
+2. `git add -A` + commit（有改动才提交），推 GitHub（走本机 7897 代理，dev 上直连 github 不通）
+3. `git archive` 打包 → `scp` 上传 → ssh 执行 `tools/remote_deploy.sh`
+4. 远端解包到 `/opt/architecture`、`systemctl restart`、本机冒烟（含未登录必须 401、源码不可下载）
+5. 从本机再打一次公网地址，确认反向代理链路正常
+
+部署形态：
 
 - 代码在 dev 主机 `/opt/architecture`，由 `architecture.service` 跑在 8060 端口
 - 存档目录 `/var/lib/architecture`，运行用户 `architecture`
