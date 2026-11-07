@@ -89,6 +89,8 @@ select { max-width: 180px; }
   position: relative;
   flex: 1;
   overflow: hidden;
+  /* 触屏上不加这条，按下拖动会被当成滚动手势，直接发 pointercancel */
+  touch-action: none;
   background-color: var(--bg);
   background-image:
     linear-gradient(var(--grid) 1px, transparent 1px),
@@ -149,6 +151,7 @@ select { max-width: 180px; }
   text-align: center;
   overflow-wrap: anywhere;
   pointer-events: auto;
+  touch-action: none;
 }
 
 .node.sel {

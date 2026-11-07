@@ -108,6 +108,13 @@ function select(kind, id) {
   drawEdges();
 }
 
+// 只切换选中样式，不重建 DOM：按住的那个元素被移除，触屏上会直接触发 pointercancel
+function markSelection() {
+  for (const d of el.nodes.children) {
+    d.classList.toggle('sel', isSel('node', d.dataset.id));
+  }
+}
+
 /* ---------------- 文字编辑 ---------------- */
 
 function startEdit(dom) {
@@ -144,18 +151,17 @@ el.nodes.addEventListener('pointerdown', ev => {
     return;
   }
 
-  // 自己判定双击：pointerdown 里 preventDefault 后浏览器可能不再派发 dblclick
+  // 双击才进编辑，但要等松手且确认没移动才生效。
+  // 否则「点一下、再按下拖动」会被当成双击，表现为拖不动。
   const now = performance.now();
-  if (lastTap && lastTap.id === node.id && now - lastTap.t < 400) {
-    lastTap = null;
-    drag = null;
-    select('node', node.id);
-    startEdit(el.nodes.querySelector(`.node[data-id="${node.id}"]`));
-    return;
-  }
-  lastTap = { id: node.id, t: now };
+  const maybeEdit = !!(lastTap && lastTap.id === node.id && now - lastTap.t < 400);
+  lastTap = maybeEdit ? null : { id: node.id, t: now };
 
-  select('node', node.id);
+  commitEditing();
+  selected = { kind: 'node', id: node.id };
+  markSelection();
+  drawEdges();
+
   drag = {
     mode: 'move',
     id: node.id,
@@ -164,6 +170,7 @@ el.nodes.addEventListener('pointerdown', ev => {
     ox: node.x,
     oy: node.y,
     moved: false,
+    maybeEdit,
   };
 });
 
@@ -175,7 +182,8 @@ window.addEventListener('pointermove', ev => {
     const dy = ev.clientY - drag.startY;
     if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
     drag.moved = true;
-    lastTap = null;                       // 拖过就不算双击
+    drag.maybeEdit = false;               // 移动过就不算双击
+    lastTap = null;
     const node = getNode(drag.id);
     node.x = Math.round(drag.ox + dx);
     node.y = Math.round(drag.oy + dy);
@@ -197,15 +205,24 @@ window.addEventListener('pointermove', ev => {
 
 window.addEventListener('pointerup', ev => {
   if (!drag) return;
-  if (drag.mode === 'wire') {
+  const d = drag;
+  drag = null;
+  tempPath = null;
+
+  if (d.mode === 'wire') {
     const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.node');
     const to = target?.dataset.id;
-    if (to && to !== drag.from && !state.edges.some(e => e.from === drag.from && e.to === to)) {
-      state.edges.push({ from: drag.from, to });
+    if (to && to !== d.from && !state.edges.some(e => e.from === d.from && e.to === to)) {
+      state.edges.push({ from: d.from, to });
     }
+    drawEdges();
+    return;
   }
-  tempPath = null;
-  drag = null;
+
+  // 双击的第二下：没拖动才算编辑
+  if (d.maybeEdit && !d.moved) {
+    startEdit(el.nodes.querySelector(`.node[data-id="${d.id}"]`));
+  }
   drawEdges();
 });
 
