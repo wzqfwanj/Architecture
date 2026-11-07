@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """一条命令完成：跑测试 -> 提交 -> 推送 -> 打包上传 -> 重启 -> 冒烟自检。
 
 用法（在仓库根目录或任意位置都能跑）：
@@ -203,6 +203,25 @@ def git_push():
     raise SystemExit("推送失败")
 
 
+def ahead_of_remote():
+    """本地是否领先 origin。不能只看有没有新提交：
+    amend、rebase 之后工作区是干净的，但远端确实落后。
+    依次尝试：当前分支的上游 -> origin/<当前分支> -> 都拿不到就算 0。"""
+    proxy = ["-c", f"http.proxy={GIT_PROXY}", "-c", f"https.proxy={GIT_PROXY}"]
+    run(["git"] + proxy + ["fetch", "origin"], check=False)
+
+    _, branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], check=False)
+    branch = branch.strip() or "master"
+    for ref in ("@{u}", f"origin/{branch}"):
+        code, out = run(["git", "rev-list", "--count", f"{ref}..HEAD"], check=False)
+        if code == 0:
+            try:
+                return int(out.strip() or 0)
+            except ValueError:
+                continue
+    return 0
+
+
 def deploy():
     tar = os.path.join(tempfile.gettempdir(), "arch-deploy.tar.gz")
     run(["git", "archive", "--format=tar.gz", "-o", tar, "HEAD"])
@@ -278,9 +297,13 @@ def main():
     step("提交")
     changed = git_commit(args.message or "chore: 更新")
 
-    if changed and not args.no_push and not args.no_deploy:
-        step("推送到 GitHub")
-        git_push()
+    if not args.no_push and not args.no_deploy:
+        ahead = ahead_of_remote()
+        if changed or ahead:
+            step(f"推送到 GitHub（领先远端 {ahead} 个提交）")
+            git_push()
+        else:
+            say("  远端已是最新，跳过推送")
 
     if not args.no_deploy:
         step("部署到 dev")

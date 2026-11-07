@@ -1,4 +1,4 @@
-﻿// 线上功能回归：直角连线、框选多选、容器、中键平移
+// 线上功能回归：直角连线、框选多选、容器、中键平移
 import { readFileSync } from 'node:fs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));

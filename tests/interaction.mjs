@@ -1,4 +1,4 @@
-﻿// 用 CDP 驱动无头 Chrome，验证拖动 / 双击编辑 / 先点后拖 三种交互
+// 用 CDP 驱动无头 Chrome，验证拖动 / 双击编辑 / 先点后拖 三种交互
 const CDP_BASE = 'http://127.0.0.1:9222';
 const PAGE_URL = 'http://127.0.0.1:8123/';
 
