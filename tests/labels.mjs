@@ -223,7 +223,7 @@ check('清空输入后移除文字',
 await setup();
 await sleep(350);
 const midOff = await wireMid();
-for (const off of [8, 10, 12]) {
+for (const off of [8, 12, 15]) {
   const beforeN = await cdp.eval("document.querySelectorAll('.node').length");
   await dblclick(midOff.x, midOff.y + off);
   const r = await cdp.eval(`({

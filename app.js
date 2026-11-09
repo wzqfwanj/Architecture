@@ -393,7 +393,7 @@ function distToSegment(p, a, b) {
 // 找出离某点最近的连线；超出 maxDist 返回 null。
 // 线的实际可点范围只有线宽的一半（±7px），双击时容易差几个像素就落空，
 // 所以这里用更大的容差兜一下。
-const EDGE_SNAP = 14;
+const EDGE_SNAP = 16;
 
 function nearestEdge(p) {
   let best = null;
@@ -924,11 +924,11 @@ el.canvas.addEventListener('pointerdown', ev => {
   // 不能用原生 dblclick：第一次点击若选中了连线会重建 SVG，
   // 浏览器就认为两次点击的目标不同，不再派发 dblclick。
   const now = performance.now();
-  // 容差从 6px 放宽到 12px：手抖两下差几个像素也该算双击
+  // 位置容差 16px、时间 500ms：手抖或点慢一点也该算双击
   const isDouble = !!lastTapCanvas &&
-    now - lastTapCanvas.t < 450 &&
-    Math.abs(ev.clientX - lastTapCanvas.x) < 12 &&
-    Math.abs(ev.clientY - lastTapCanvas.y) < 12;
+    now - lastTapCanvas.t < 500 &&
+    Math.abs(ev.clientX - lastTapCanvas.x) < 16 &&
+    Math.abs(ev.clientY - lastTapCanvas.y) < 16;
   lastTapCanvas = isDouble ? null : { t: now, x: ev.clientX, y: ev.clientY };
 
   // 双击连线（或它的文字）：编辑这条线的文字

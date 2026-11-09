@@ -149,6 +149,15 @@ class Handler(SimpleHTTPRequestHandler):
         os.remove(target)
         return self.send_json(200, {"ok": True})
 
+    def end_headers(self):
+        # 静态资源必须每次回源校验。
+        # 不设 Cache-Control 时浏览器会用「启发式缓存」（按 Last-Modified 推算新鲜期），
+        # 改完代码后可能几小时都还拿着旧文件。
+        # no-cache 不是不缓存，而是每次都要校验，配合 Last-Modified 未变时仍是 304，不费流量。
+        if not self.path.startswith(PREFIX):
+            self.send_header("Cache-Control", "no-cache, must-revalidate")
+        super().end_headers()
+
     def log_message(self, fmt, *args):
         sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
 
