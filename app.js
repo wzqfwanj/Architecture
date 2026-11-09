@@ -7,6 +7,7 @@ const el = {
   canvas: document.getElementById('canvas'),
   nodes: document.getElementById('nodes'),
   wireLayer: document.getElementById('wireLayer'),
+  labelLayer: document.getElementById('labelLayer'),
   hitLayer: document.getElementById('hitLayer'),
   marquee: document.getElementById('marquee'),
   name: document.getElementById('name'),
@@ -73,6 +74,7 @@ function toCanvas(clientX, clientY) {
 function applyView() {
   el.nodes.style.transform = `translate(${view.x}px, ${view.y}px)`;
   el.wireLayer.setAttribute('transform', `translate(${view.x} ${view.y})`);
+  if (el.labelLayer) el.labelLayer.setAttribute('transform', `translate(${view.x} ${view.y})`);
   el.canvas.style.backgroundPosition = `${view.x}px ${view.y}px`;
 }
 
@@ -420,6 +422,92 @@ function moveTargets(anchorId) {
   return [...ids].map(getNode).filter(Boolean);
 }
 
+/* ---------------- 撤销 / 重做 ---------------- */
+
+const HISTORY_MAX = 80;
+const undoStack = [];
+const redoStack = [];
+let historyLocked = false;   // 应用历史时不要再次记录
+
+// 只保存文档内容，不动视图和选择
+function snapshot() {
+  return JSON.stringify({ nodes: state.nodes, edges: state.edges });
+}
+
+// 动作开始前记录「起点」；连续操作（拖动、缩放）只在开始时记一次
+function beginHistory() {
+  if (historyLocked) return;
+  const snap = snapshot();
+  if (undoStack.length && undoStack[undoStack.length - 1] === snap) return;
+  undoStack.push(snap);
+  if (undoStack.length > HISTORY_MAX) undoStack.shift();
+  redoStack.length = 0;
+}
+
+// 动作完成后对比：没变化就把这条记录丢掉，避免撤销时「空退一步」
+function sealHistory() {
+  if (historyLocked) return;
+  if (!undoStack.length) return;
+  if (undoStack[undoStack.length - 1] === snapshot()) undoStack.pop();
+  redoStack.length = 0;
+  updateHistoryHint();
+}
+
+function restore(snap) {
+  historyLocked = true;
+  const doc = JSON.parse(snap);
+  state.nodes = doc.nodes;
+  state.edges = doc.edges;
+  // id 计数器要跟上，否则撤销后再新建会撞 id
+  uid = state.nodes.reduce((m, n) => {
+    const num = parseInt(String(n.id).slice(1), 10);
+    return Math.max(m, Number.isFinite(num) ? num : 0);
+  }, 0) + 1;
+  routeCache.clear();
+  routeStamp = '';
+  // 撤销可能会把选中的对象删掉
+  for (const id of [...selection]) if (!getNode(id)) selection.delete(id);
+  if (selectedEdge && !state.edges.some(e => edgeKey(e) === selectedEdge)) selectedEdge = null;
+  render();
+  historyLocked = false;
+  updateHistoryHint();
+}
+
+function undo() {
+  commitEditing();
+  if (!undoStack.length) return false;
+  const cur = snapshot();
+  const prev = undoStack.pop();
+  redoStack.push(cur);
+  restore(prev);
+  return true;
+}
+
+function redo() {
+  commitEditing();
+  if (!redoStack.length) return false;
+  const cur = snapshot();
+  const next = redoStack.pop();
+  undoStack.push(cur);
+  restore(next);
+  return true;
+}
+
+let hintTimer = null;
+function updateHistoryHint() {
+  const hint = document.getElementById('historyHint');
+  if (!hint) return;
+  const canUndo = undoStack.length > 0;
+  const canRedo = redoStack.length > 0;
+  if (!canUndo && !canRedo) {
+    hint.textContent = '';
+    return;
+  }
+  hint.textContent = canRedo ? `已撤回 · 可重做 ${redoStack.length} 步` : `可撤回 ${undoStack.length} 步`;
+  clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => { hint.textContent = ''; }, 2000);
+}
+
 /* ---------------- 渲染 ---------------- */
 
 function renderNodes() {
@@ -459,6 +547,102 @@ function renderNodes() {
   applyView();
 }
 
+// 取连线的几何（带缓存）；节点一动缓存就整体清掉
+function geoOf(e) {
+  const ck = edgeKey(e) + '#' + (e.bends || []).map(p => p.x + ',' + p.y).join(';');
+  let geo = routeCache.get(ck);
+  if (geo === undefined) {
+    geo = edgeGeometry(e);
+    routeCache.set(ck, geo);
+  }
+  return geo;
+}
+
+// 文字挂在最长那一段的中点上，看起来最自然
+function labelAnchor(points) {
+  let best = { len: -1, x: 0, y: 0 };
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const len = Math.abs(b.x - a.x) + Math.abs(b.y - a.y);
+    if (len > best.len) {
+      best = { len, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    }
+  }
+  return { x: best.x, y: best.y };
+}
+
+function drawLabels() {
+  if (!el.labelLayer) return;
+  el.labelLayer.textContent = '';
+  for (const e of state.edges) {
+    if (!e.label) continue;
+    const geo = geoOf(e);
+    if (!geo) continue;
+    const p = labelAnchor(geo.points);
+    const t = document.createElementNS(NS, 'text');
+    t.setAttribute('x', Math.round(p.x));
+    t.setAttribute('y', Math.round(p.y));
+    t.setAttribute('class', 'wire-label');
+    t.dataset.edge = edgeKey(e);
+    t.textContent = e.label;
+    el.labelLayer.append(t);
+  }
+  el.labelLayer.setAttribute('transform', `translate(${view.x} ${view.y})`);
+}
+
+/* ---------------- 连线文字编辑 ---------------- */
+
+let labelEditor = null;
+
+function editEdgeLabel(edge) {
+  if (!edge) return;
+  commitEditing();
+  const geo = geoOf(edge);
+  if (!geo) return;
+  const p = labelAnchor(geo.points);
+  beginHistory();
+
+  const input = document.createElement('input');
+  input.className = 'edge-label-input';
+  input.value = edge.label || '';
+  input.placeholder = '输入文字';
+  input.style.left = (p.x + view.x) + 'px';
+  input.style.top = (p.y + view.y) + 'px';
+  el.canvas.append(input);
+
+  labelEditor = { input, edge };
+  input.focus();
+  input.select();
+
+  input.addEventListener('keydown', ev => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') { ev.preventDefault(); commitLabelEdit(); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); cancelLabelEdit(); }
+  });
+  input.addEventListener('blur', () => commitLabelEdit());
+}
+
+function commitLabelEdit() {
+  if (!labelEditor) return;
+  const { input, edge } = labelEditor;
+  labelEditor = null;          // 先清，避免移除元素触发 blur 再进来
+  const text = input.value.replace(/\s+/g, ' ').trim();
+  input.remove();
+  if (text) edge.label = text;
+  else delete edge.label;
+  drawLabels();
+  sealHistory();
+}
+
+function cancelLabelEdit() {
+  if (!labelEditor) return;
+  const { input } = labelEditor;
+  labelEditor = null;
+  input.remove();
+  sealHistory();               // 内容没变，这一步会被丢掉
+}
+
 function drawEdges() {
   el.wireLayer.textContent = '';
   el.hitLayer.textContent = '';
@@ -471,12 +655,7 @@ function drawEdges() {
   }
 
   for (const e of state.edges) {
-    const ck = edgeKey(e) + '#' + (e.bends || []).map(p => p.x + ',' + p.y).join(';');
-    let geo = routeCache.get(ck);
-    if (geo === undefined) {
-      geo = edgeGeometry(e);
-      routeCache.set(ck, geo);
-    }
+    const geo = geoOf(e);
     if (!geo) continue;
     const d = toPath(geo.points);
     const key = edgeKey(e);
@@ -506,12 +685,14 @@ function drawEdges() {
   const t = `translate(${view.x} ${view.y})`;
   el.wireLayer.setAttribute('transform', t);
   el.hitLayer.setAttribute('transform', t);
+  drawLabels();
 }
 
 // 正在编辑的文字先落回 state，否则重绘会把它丢掉
 function commitEditing() {
   const label = el.nodes.querySelector('.label[contenteditable="true"]');
   if (label) label.blur();   // blur 同步触发 focusout，由那里写回 state
+  commitLabelEdit();
 }
 
 function render() {
@@ -545,6 +726,7 @@ function markSelection() {
 function startEdit(dom) {
   const label = dom?.querySelector('.label');
   if (!label || label.isContentEditable) return;
+  beginHistory();                       // 记录改文字之前的文本
   label.contentEditable = 'true';
   label.dataset.before = label.textContent;
   dom.classList.add('editing');
@@ -602,6 +784,7 @@ el.nodes.addEventListener('pointerdown', ev => {
     tempPath = document.createElementNS(NS, 'path');
     tempPath.setAttribute('class', 'temp');
     tempPath.setAttribute('d', '');
+    beginHistory();
     drag = { mode: 'wire', from: node.id, fromSide: port.dataset.side };
     drawEdges();
     return;
@@ -613,6 +796,7 @@ el.nodes.addEventListener('pointerdown', ev => {
     clearSelection();
     selection.add(node.id);
     markSelection();
+    beginHistory();
     drag = {
       mode: 'resize',
       id: node.id,
@@ -653,6 +837,7 @@ el.nodes.addEventListener('pointerdown', ev => {
     .filter(e => Array.isArray(e.bends) && e.bends.length)
     .map(e => ({ e, bends: e.bends.map(p => ({ x: p.x, y: p.y })) }));
 
+  beginHistory();
   drag = {
     mode: 'move',
     id: node.id,
@@ -676,6 +861,9 @@ el.canvas.addEventListener('auxclick', ev => {
 });
 
 el.canvas.addEventListener('pointerdown', ev => {
+  // 点在自己的输入框上时交给输入框处理，别触发框选
+  if (ev.target.closest('.edge-label-input')) return;
+
   const onNode = !!ev.target.closest('.node');
 
   // 中键：任何位置都能拖画布（包括按在节点上）
@@ -697,6 +885,9 @@ el.canvas.addEventListener('pointerdown', ev => {
 
   // 连线上按下：不框选，可以拖着走，也可以点一下选中
   const hit = ev.target.closest('#wireHits path');
+  // 直接点在已有的文字上，等同于点到它所属的那条线
+  const labelText = ev.target.closest('#wireLabels text');
+  const hitKey = hit ? hit.dataset.edge : (labelText ? labelText.dataset.edge : null);
 
   // 自己判定画布双击。
   // 不能用原生 dblclick：第一次点击若选中了连线会重建 SVG，
@@ -708,22 +899,19 @@ el.canvas.addEventListener('pointerdown', ev => {
     Math.abs(ev.clientY - lastTapCanvas.y) < 6;
   lastTapCanvas = isDouble ? null : { t: now, x: ev.clientX, y: ev.clientY };
 
-  // 双击连线的某一段：清掉手动折点，回到自动绕行。
-  // 只有这条线确实被手调过才这么做，否则双击仍按空白处处理（新建节点）。
-  if (isDouble && hit && tool === 'select') {
-    const edge = state.edges.find(x => edgeKey(x) === hit.dataset.edge);
-    if (edge && Array.isArray(edge.bends) && edge.bends.length) {
-      ev.preventDefault();
-      delete edge.bends;
-      routeCache.clear();
-      render();
-      select('edge', edgeKey(edge));
+  // 双击连线（或它的文字）：编辑这条线的文字
+  if (isDouble && hitKey && tool === 'select') {
+    ev.preventDefault();
+    const edge = state.edges.find(x => edgeKey(x) === hitKey);
+    if (edge) {
+      select('edge', hitKey);
+      editEdgeLabel(edge);
       return;
     }
   }
 
-  if (isDouble && !(hit && state.edges.find(x => edgeKey(x) === hit.dataset.edge)?.bends?.length)
-      && tool === 'select') {
+  // 双击空白：新建方框
+  if (isDouble && !hitKey && tool === 'select') {
     ev.preventDefault();
     const p = toCanvas(ev.clientX, ev.clientY);
     const node = {
@@ -735,9 +923,18 @@ el.canvas.addEventListener('pointerdown', ev => {
       text: '节点',
       kind: 'box',
     };
+    beginHistory();
     state.nodes.push(node);
     render();
     select('node', node.id);
+    sealHistory();
+    return;
+  }
+
+  // 点在文字上：只选中对应的线，不拖段也不框选
+  if (labelText) {
+    ev.preventDefault();
+    if (!isDouble) select('edge', labelText.dataset.edge);
     return;
   }
 
@@ -747,6 +944,7 @@ el.canvas.addEventListener('pointerdown', ev => {
     const geo = edge ? edgeGeometry(edge) : null;
     if (edge && geo) {
       ev.preventDefault();
+      beginHistory();
       drag = {
         mode: 'segs',
         key: hit.dataset.edge,
@@ -779,6 +977,7 @@ el.canvas.addEventListener('pointerdown', ev => {
       startY: ev.clientY - r.top,
       moved: false,
     };
+    beginHistory();
     el.canvas.classList.add('marqueeing');
     showMarquee(drag.startX, drag.startY, drag.startX, drag.startY);
     return;
@@ -1013,6 +1212,7 @@ window.addEventListener('pointerup', ev => {
   if (d.mode === 'segs') {
     if (!d.moved) select('edge', d.key);   // 只是点了一下：选中这条线
     else drawEdges();
+    sealHistory();
     return;
   }
 
@@ -1079,6 +1279,7 @@ window.addEventListener('pointerup', ev => {
     clearSelection();
     selection.add(node.id);
     render();
+    sealHistory();
     lastTap = { id: node.id, t: performance.now() };
     return;
   }
@@ -1096,6 +1297,7 @@ window.addEventListener('pointerup', ev => {
       if (!state.edges.some(e => edgeKey(e) === edgeKey(edge))) state.edges.push(edge);
     }
     drawEdges();
+    sealHistory();
     return;
   }
 
@@ -1103,8 +1305,12 @@ window.addEventListener('pointerup', ev => {
     // 尺寸变了，容器包住的成员可能增减，重绘让选中框和端口位置对齐
     renderNodes();
     drawEdges();
+    sealHistory();
     return;
   }
+
+  // 拖动类操作到这里结束，统一封口（没实际移动就不会留下撤销步）
+  if (d.mode === 'move') sealHistory();
 
   // 双击的第二下：没拖动才算编辑（多选时不进编辑）
   if (d.maybeEdit && !d.moved && selection.size === 1) {
@@ -1142,6 +1348,7 @@ el.nodes.addEventListener('focusout', ev => {
   if (node) {
     node.text = label.textContent.replace(/\s+/g, ' ').trim() || (node.kind === 'group' ? '分组' : '节点');
     label.textContent = node.text;
+    sealHistory();                      // 文本没变就不留下撤销步
   }
 });
 
@@ -1151,11 +1358,27 @@ document.addEventListener('keydown', ev => {
   const t = ev.target;
   const typing = t.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA'].includes(t.tagName);
 
-  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 's') {
+  const mod = ev.ctrlKey || ev.metaKey;
+  const hotkey = ev.key.toLowerCase();
+
+  if (mod && hotkey === 's') {
     ev.preventDefault();
     save();
     return;
   }
+
+  // 撤销 / 重做：即使在输入框里也接管，避免和浏览器自己的历史打架
+  if (mod && hotkey === 'z' && !ev.shiftKey) {
+    ev.preventDefault();
+    undo();
+    return;
+  }
+  if (mod && ((hotkey === 'z' && ev.shiftKey) || hotkey === 'y')) {
+    ev.preventDefault();
+    redo();
+    return;
+  }
+
   if (typing) return;
 
   if (ev.key === 'Home') {          // 节点全部框回视野
@@ -1164,17 +1387,30 @@ document.addEventListener('keydown', ev => {
     return;
   }
 
+  // R：把选中的连线恢复到自动布线（原先是双击线段的动作）
+  if (hotkey === 'r' && selectedEdge) {
+    const edge = state.edges.find(x => edgeKey(x) === selectedEdge);
+    if (edge && Array.isArray(edge.bends) && edge.bends.length) {
+      beginHistory();
+      delete edge.bends;
+      routeCache.clear();
+      render();
+      sealHistory();
+      return;
+    }
+  }
+
   // 工具快捷键
-  const key = ev.key.toLowerCase();
-  if (key === 'v') return setTool('select');
-  if (key === 'b') return setTool('box');
-  if (key === 'g') return setTool('group');
+  if (hotkey === 'v') return setTool('select');
+  if (hotkey === 'b') return setTool('box');
+  if (hotkey === 'g') return setTool('group');
 
   if (ev.key === 'Escape') return select(null);
 
   if (ev.key !== 'Delete' && ev.key !== 'Backspace') return;
   if (!selection.size && !selectedEdge) return;
   ev.preventDefault();
+  beginHistory();
 
   if (selection.size) {
     const ids = new Set(selection);
@@ -1186,6 +1422,7 @@ document.addEventListener('keydown', ev => {
   }
   clearSelection();
   render();
+  sealHistory();
 });
 
 /* ---------------- 主题 ---------------- */
@@ -1248,9 +1485,14 @@ async function load(name) {
     return Math.max(m, Number.isFinite(num) ? num : 0);
   }, 0) + 1;
   el.name.value = name;
+  cancelLabelEdit();
   commitEditing();
   clearSelection();
+  // 换了一张图，历史不能跨图撤销
+  undoStack.length = 0;
+  redoStack.length = 0;
   render();
+  updateHistoryHint();
 }
 
 async function save() {
@@ -1264,6 +1506,11 @@ async function save() {
   if (!res.ok) return alert('保存失败：HTTP ' + res.status);
   state.name = name;
   el.name.value = name;
+  // 存过盘就以此为新的起点，撤销不会退回保存前
+  undoStack.length = 0;
+  redoStack.length = 0;
+  routeCache.clear();
+  routeStamp = '';
   await refreshList(name);
   flash('已保存');
 }
@@ -1278,8 +1525,12 @@ async function removeCurrent() {
   state.name = '';
   el.name.value = '';
   view = { x: 0, y: 0 };
+  cancelLabelEdit();
   clearSelection();
+  undoStack.length = 0;
+  redoStack.length = 0;
   render();
+  updateHistoryHint();
   await refreshList();
 }
 

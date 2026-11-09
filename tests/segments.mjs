@@ -174,21 +174,28 @@ const afterDrag = await geo();
 check('手动拖动后仍是全直角', afterDrag.ortho === true,
       `折点数=${afterDrag.pts.length} bends=${JSON.stringify(afterDrag.bends)}`);
 
-// ===== 5. 双击某段恢复自动绕行 =====
+// ===== 5. 选中线段后按 R 恢复自动绕行 =====
+// 双击连线现在用于编辑文字，所以恢复布线挪到了 R 键
 const anySeg = await cdp.eval(`(() => {
   const el2 = document.querySelector('#hitLayer path');
   const p = el2.getAttribute('d').match(/M([-\\d.]+),([-\\d.]+) L([-\\d.]+),([-\\d.]+)/);
   const r = document.getElementById('canvas').getBoundingClientRect();
-  return { x: (+p[1] + +p[3]) / 2 + view.x + r.left, y: (+p[2] + +p[4]) / 2 + view.y + r.top };
+  return { x: (+p[1] + +p[3]) / 2 + view.x + r.left, y: (+p[2] + +p[4]) / 2 + view.y + r.top,
+           edge: el2.dataset.edge };
 })()`);
-for (const cc of [1, 2]) {
-  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: anySeg.x, y: anySeg.y, button: 'left', buttons: 1, clickCount: cc, pointerType: 'mouse' });
-  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: anySeg.x, y: anySeg.y, button: 'left', buttons: 0, clickCount: cc, pointerType: 'mouse' });
-  await sleep(70);
-}
-await sleep(400);
+// 先点一下选中这条线
+await mouse('mouseMoved', anySeg.x, anySeg.y);
+await mouse('mousePressed', anySeg.x, anySeg.y);
+await mouse('mouseReleased', anySeg.x, anySeg.y);
+await sleep(250);
+const selNow = await cdp.eval('selectedEdge');
+check('点线段可选中它', selNow === anySeg.edge, `selectedEdge=${selNow}`);
+
+await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'r', code: 'KeyR', windowsVirtualKeyCode: 82 });
+await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'r', code: 'KeyR', windowsVirtualKeyCode: 82 });
+await sleep(350);
 const reset = await geo();
-check('双击线段恢复自动绕行', reset.manual === false && reset.bends === null,
+check('R 键恢复自动绕行', reset.manual === false && reset.bends === null,
       `manual=${reset.manual} bends=${JSON.stringify(reset.bends)}`);
 
 // ===== 6. 点一下线段只是选中，不改形状 =====

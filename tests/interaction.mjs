@@ -129,11 +129,32 @@ const check = (name, ok, detail) => {
   await sleep(200);
 
   // ===== 场景 4：画布空白处双击新建 =====
+  // 双击连线的行为已经改成「编辑连线文字」，所以这里要挑一个既不在节点上、
+  // 也不在任何线段上的空白点，否则测的就不是这个功能了。
   const countBefore = await cdp.eval("document.querySelectorAll('.node').length");
-  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 560, y: 300, button: 'none', buttons: 0 });
+  const blank = await cdp.eval(`(() => {
+    const c = document.getElementById('canvas').getBoundingClientRect();
+    const onAnything = (x, y) => {
+      const e = document.elementFromPoint(x, y);
+      return !!(e && (e.closest('.node') || e.closest('#wireHits path') || e.closest('#wireLabels text')));
+    };
+    for (let y = c.top + 40; y < c.bottom - 40; y += 20) {
+      for (let x = c.left + 40; x < c.right - 40; x += 20) {
+        if (!onAnything(x, y)) {
+          // 再确认一下这个点周围 4px 也是空的，避免边界抖动
+          if (!onAnything(x - 4, y - 4) && !onAnything(x + 4, y + 4)) return { x, y };
+        }
+      }
+    }
+    return null;
+  })()`);
+  if (!blank) throw new Error('找不到空白处');
+  const bx = Math.round(blank.x);
+  const by = Math.round(blank.y);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bx, y: by, button: 'none', buttons: 0 });
   for (const cc of [1, 2]) {
-    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 560, y: 300, button: 'left', buttons: 1, clickCount: cc, pointerType: 'mouse' });
-    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 560, y: 300, button: 'left', buttons: 0, clickCount: cc, pointerType: 'mouse' });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: bx, y: by, button: 'left', buttons: 1, clickCount: cc, pointerType: 'mouse' });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: bx, y: by, button: 'left', buttons: 0, clickCount: cc, pointerType: 'mouse' });
     await sleep(60);
   }
   await sleep(300);

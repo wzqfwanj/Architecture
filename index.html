@@ -15,7 +15,8 @@
   <select id="list"></select>
   <button id="del" title="删除当前图">删除</button>
   <span class="grow"></span>
-  <span class="hint">左键框选 · 中键平移 · 双击改字 · 拖方框圆点连线 · Home 归位</span>
+  <span id="historyHint" class="history-hint"></span>
+  <span class="hint">左键框选 · 中键平移 · 双击方框改字 · 双击连线加文字 · R 恢复布线 · Ctrl+Z 撤回</span>
   <button id="theme" title="切换明暗">暗</button>
 </header>
 
@@ -41,6 +42,10 @@
         </marker>
       </defs>
       <g id="wireLayer"></g>
+    </svg>
+    <!-- 连线上的文字：压在线上，带底色描边 -->
+    <svg id="wireLabels" xmlns="http://www.w3.org/2000/svg">
+      <g id="labelLayer"></g>
     </svg>
     <div id="nodes"></div>
     <div id="marquee" hidden></div>

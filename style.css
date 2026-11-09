@@ -66,6 +66,14 @@ body {
   font-size: 12px;
 }
 
+/* 撤回 / 重做的临时提示，2 秒后自己消失 */
+.history-hint {
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 0;
+  white-space: nowrap;
+}
+
 button, select, input {
   font: inherit;
   color: var(--fg);
@@ -203,6 +211,50 @@ select { max-width: 180px; }
 }
 
 .arrowhead { fill: var(--fg); }
+
+/* ---------- 连线上的文字 ---------- */
+
+#wireLabels {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  /* 压在连线之上，文字才不会被线穿过 */
+  z-index: 5;
+}
+
+.wire-label {
+  font: 12px/1 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  fill: var(--fg);
+  /* 描一圈底色，线从字底下过也读得清 */
+  stroke: var(--bg);
+  stroke-width: 3px;
+  paint-order: stroke;
+  stroke-linejoin: round;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  /* 不吃鼠标事件：文字正好压在线上，吃事件就没法拖那一段了。
+     想改文字双击线本身即可。 */
+  pointer-events: none;
+  user-select: none;
+}
+
+/* 双击连线时浮出来的输入框 */
+.edge-label-input {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 120px;
+  padding: 2px 6px;
+  font: 12px/1.4 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--fg);
+  border-radius: 3px;
+  outline: none;
+  text-align: center;
+  z-index: 9;
+}
 
 /* 节点层铺满画布，但只有节点本身吃事件，空白处要穿透到 SVG 连线和画布 */
 #nodes {
