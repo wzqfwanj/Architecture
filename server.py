@@ -103,8 +103,12 @@ class Handler(SimpleHTTPRequestHandler):
             return
         name = self.route()
         if name is None:
+            path = urlparse(self.path).path
+            # 首页单独处理：给静态资源引用带上版本号，避免浏览器用旧文件
+            if path in ("", "/", "/index.html"):
+                return self.serve_index()
             # 只对外提供前端静态资源，源码与存档不走静态路由
-            ext = os.path.splitext(urlparse(self.path).path)[1]
+            ext = os.path.splitext(path)[1]
             if ext not in ("", ".html", ".css", ".js", ".svg", ".ico", ".png"):
                 return self.send_json(404, {"error": "not found"})
             return super().do_GET()
@@ -157,6 +161,32 @@ class Handler(SimpleHTTPRequestHandler):
         if not self.path.startswith(PREFIX):
             self.send_header("Cache-Control", "no-cache, must-revalidate")
         super().end_headers()
+
+    def serve_index(self):
+        """首页：把 app.js / style.css 的引用加上版本号。
+
+        只靠 Cache-Control 还不够稳：用户可能早就缓存了一份。
+        让 URL 里带上文件的修改时间，文件一改就是新地址，浏览器必然会重新下载。
+        """
+        index = os.path.join(BASE, "index.html")
+        with open(index, encoding="utf-8") as fh:
+            html = fh.read()
+
+        ver = int(os.path.getmtime(index))
+        for asset in ("app.js", "style.css"):
+            ap = os.path.join(BASE, asset)
+            if os.path.exists(ap):
+                ver = max(ver, int(os.path.getmtime(ap)))
+
+        html = html.replace('href="style.css"', 'href="style.css?v=%d"' % ver)
+        html = html.replace('src="app.js"', 'src="app.js?v=%d"' % ver)
+        body = html.encode("utf-8")
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, fmt, *args):
         sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))

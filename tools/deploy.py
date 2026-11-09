@@ -259,17 +259,22 @@ def smoke_public():
     auth = "Basic " + base64.b64encode(f"admin:{pwd}".encode()).decode()
     url = "https://wkeeli.cn/arch/"
 
-    def get(with_auth):
-        req = urllib.request.Request(url)
-        if with_auth:
-            req.add_header("Authorization", auth)
-        try:
-            with urllib.request.urlopen(req, timeout=20) as r:
-                return r.status
-        except urllib.error.HTTPError as e:
-            return e.code
-        except Exception as e:
-            return f"ERR {e}"
+    def get(with_auth, tries=3):
+        # 刚重启完第一次请求有时会慢，多试两次再判定失败
+        last = None
+        for i in range(tries):
+            req = urllib.request.Request(url)
+            if with_auth:
+                req.add_header("Authorization", auth)
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return r.status
+            except urllib.error.HTTPError as e:
+                return e.code
+            except Exception as e:
+                last = e
+                time.sleep(2)
+        return f"ERR {last}"
 
     ok = get(True)
     no = get(False)
