@@ -379,6 +379,37 @@ function routePoints(p1, s1, p2, s2) {
   return simple;
 }
 
+// 点到线段的距离（都是画布坐标）
+function distToSegment(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (!len2) return Math.hypot(p.x - a.x, p.y - a.y);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+}
+
+// 找出离某点最近的连线；超出 maxDist 返回 null。
+// 线的实际可点范围只有线宽的一半（±7px），双击时容易差几个像素就落空，
+// 所以这里用更大的容差兜一下。
+const EDGE_SNAP = 14;
+
+function nearestEdge(p) {
+  let best = null;
+  let bestD = Infinity;
+  for (const e of state.edges) {
+    const geo = geoOf(e);
+    if (!geo) continue;
+    const pts = geo.points;
+    for (let i = 1; i < pts.length; i++) {
+      const d = distToSegment(p, pts[i - 1], pts[i]);
+      if (d < bestD) { bestD = d; best = e; }
+    }
+  }
+  return bestD <= EDGE_SNAP ? best : null;
+}
+
 // 一条连线的路径与端点信息
 function edgeGeometry(e) {
   const a = getNode(e.from);
@@ -893,10 +924,11 @@ el.canvas.addEventListener('pointerdown', ev => {
   // 不能用原生 dblclick：第一次点击若选中了连线会重建 SVG，
   // 浏览器就认为两次点击的目标不同，不再派发 dblclick。
   const now = performance.now();
+  // 容差从 6px 放宽到 12px：手抖两下差几个像素也该算双击
   const isDouble = !!lastTapCanvas &&
-    now - lastTapCanvas.t < 400 &&
-    Math.abs(ev.clientX - lastTapCanvas.x) < 6 &&
-    Math.abs(ev.clientY - lastTapCanvas.y) < 6;
+    now - lastTapCanvas.t < 450 &&
+    Math.abs(ev.clientX - lastTapCanvas.x) < 12 &&
+    Math.abs(ev.clientY - lastTapCanvas.y) < 12;
   lastTapCanvas = isDouble ? null : { t: now, x: ev.clientX, y: ev.clientY };
 
   // 双击连线（或它的文字）：编辑这条线的文字
@@ -910,10 +942,18 @@ el.canvas.addEventListener('pointerdown', ev => {
     }
   }
 
-  // 双击空白：新建方框
+  // 双击空白：先看看附近有没有连线。
+  // 线只有 7px 的可点宽度，随手双击往往落在旁边一两像素，
+  // 这时候应当理解为「给这条线加文字」，而不是新建一个方框。
   if (isDouble && !hitKey && tool === 'select') {
     ev.preventDefault();
     const p = toCanvas(ev.clientX, ev.clientY);
+    const near = nearestEdge(p);
+    if (near) {
+      select('edge', edgeKey(near));
+      editEdgeLabel(near);
+      return;
+    }
     const node = {
       id: nextId(),
       x: Math.round(p.x - 70),

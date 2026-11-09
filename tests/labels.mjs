@@ -218,6 +218,26 @@ check('清空输入后移除文字',
       cleared.label === null && cleared.textEl === false,
       `label=${cleared.label} 还有文字元素=${cleared.textEl}`);
 
+// ===== 8.5 双击线旁边几个像素，也应该当作给这条线加文字 =====
+// 线的实际可点范围只有 ±7px，随手双击常常差一点，不能因此变成新建方框
+await setup();
+await sleep(350);
+const midOff = await wireMid();
+for (const off of [8, 10, 12]) {
+  const beforeN = await cdp.eval("document.querySelectorAll('.node').length");
+  await dblclick(midOff.x, midOff.y + off);
+  const r = await cdp.eval(`({
+    editor: !!document.querySelector('.edge-label-input'),
+    nodes: document.querySelectorAll('.node').length,
+    sel: selectedEdge,
+  })`);
+  check(`双击线下方 ${off}px 也弹文字输入框（不新建节点）`,
+        r.editor === true && r.nodes === beforeN && !!r.sel,
+        `输入框=${r.editor} 节点数=${beforeN}->${r.nodes} 选中线=${r.sel ? '是' : '否'}`);
+  await cdp.eval(`if (typeof cancelLabelEdit === 'function') cancelLabelEdit();`);
+  await sleep(150);
+}
+
 // ===== 9. 点空白处不产生文字；双击空白仍是新建方框 =====
 const before = await cdp.eval("document.querySelectorAll('.node').length");
 await dblclick(900, 620);

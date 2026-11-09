@@ -134,9 +134,26 @@ const check = (name, ok, detail) => {
   const countBefore = await cdp.eval("document.querySelectorAll('.node').length");
   const blank = await cdp.eval(`(() => {
     const c = document.getElementById('canvas').getBoundingClientRect();
+    // 除了不能压在元素上，还得离所有连线 20px 以上：
+    // 双击点落在线的 14px 内会被当作「给这条线加文字」。
+    const distToWire = (x, y) => {
+      let best = Infinity;
+      const r0 = document.getElementById('canvas').getBoundingClientRect();
+      const pt = { x: x - r0.left - view.x, y: y - r0.top - view.y };
+      for (const e of state.edges) {
+        const g = geoOf(e);
+        if (!g) continue;
+        const pts = g.points;
+        for (let i = 1; i < pts.length; i++) {
+          best = Math.min(best, distToSegment(pt, pts[i - 1], pts[i]));
+        }
+      }
+      return best;
+    };
     const onAnything = (x, y) => {
       const e = document.elementFromPoint(x, y);
-      return !!(e && (e.closest('.node') || e.closest('#wireHits path') || e.closest('#wireLabels text')));
+      if (e && (e.closest('.node') || e.closest('#wireHits path') || e.closest('#wireLabels text'))) return true;
+      return distToWire(x, y) < 20;
     };
     for (let y = c.top + 40; y < c.bottom - 40; y += 20) {
       for (let x = c.left + 40; x < c.right - 40; x += 20) {
